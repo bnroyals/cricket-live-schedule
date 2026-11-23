@@ -42,7 +42,6 @@ import {
   logoutAdmin,
   logoutAllAdminSessions,
   refreshPublicDataFromFirestore,
-  setupFirstAdmin,
   touchAdminSession,
   waitForFirebaseAuthReady,
 } from '../lib/storage';
@@ -89,18 +88,15 @@ const EMPTY_CHANNEL_FORM = {
 export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) {
   const navigate = useNavigate();
 
-  // Always resolve setup vs login from Firestore (fetchAdminConfigured) and wait for Firebase Auth
-  // to restore before deciding on an existing session — never decide from localStorage.
+  // Wait for Firebase Auth to restore and sync Firestore session config & lockout state on load.
   const [authChecking, setAuthChecking] = useState<boolean>(true);
-  const [configured, setConfigured] = useState<boolean>(false);
   const [session, setSession] = useState<AdminSession | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
-  // Setup / Login Form States
+  // Login Form States
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -143,20 +139,19 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     }
   }, []);
 
-  // On mount: ask Firestore whether an admin exists, fetch server-side lockout state,
+  // On mount: sync Firestore session metadata and server-side lockout state,
   // and wait for Firebase Auth to restore before checking for an active session.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [isConfiguredRemote] = await Promise.all([
+        await Promise.all([
           fetchAdminConfigured(),
           waitForFirebaseAuthReady(),
           fetchLockoutState(),
         ]);
         if (cancelled) return;
-        setConfigured(isConfiguredRemote);
-        const restored = isConfiguredRemote ? getActiveAdminSession(Date.now()) : null;
+        const restored = getActiveAdminSession(Date.now());
         setSession(restored);
         setNowMs(Date.now());
       } finally {
@@ -191,8 +186,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   useEffect(() => {
     if (authChecking) return;
     const handleStorage = () => {
-      void fetchAdminConfigured().then((isConfiguredRemote) => {
-        setConfigured(isConfiguredRemote);
+      void fetchAdminConfigured().then(() => {
         const active = getActiveAdminSession();
         if (!active && session) {
           setSession(null);
@@ -237,7 +231,6 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   }, [session, matches, channels, activeTab, loadAuditLog]);
 
   const lockout = getLockoutState(nowMs);
-  const setupStrength = useMemo(() => validateStrongPassword(passwordInput), [passwordInput]);
   const newPwStrength = useMemo(() => validateStrongPassword(newPw), [newPw]);
 
   const slugPreview = useMemo(() => {
@@ -255,31 +248,6 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   // ============================================================================
   // AUTH HANDLERS
   // ============================================================================
-
-  const handleFirstTimeSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-    setAuthNotice(null);
-    setAuthSubmitting(true);
-    try {
-      const res = await setupFirstAdmin(emailInput, passwordInput, confirmPasswordInput);
-      if (!res.ok) {
-        setAuthError(res.error);
-        const isConfiguredRemote = await fetchAdminConfigured();
-        setConfigured(isConfiguredRemote);
-        return;
-      }
-      setConfigured(true);
-      setSession(res.session);
-      setEmailInput('');
-      setPasswordInput('');
-      setConfirmPasswordInput('');
-      setFeedback({ type: 'success', text: 'Admin account created in Firebase Auth and signed in.' });
-      void refreshPublicDataFromFirestore();
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -540,10 +508,10 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
           <section className="rounded-2xl bg-white border border-slate-200 shadow-xs p-8 text-center">
             <Shield className="w-7 h-7 text-emerald-700 mx-auto" aria-hidden="true" />
             <h1 className="font-display text-2xl font-bold text-slate-900 mt-3">
-              Checking Administrator Account
+              Checking Administrator Session
             </h1>
             <p className="text-xs text-slate-600 mt-1.5">
-              Verifying server-side account status in Firebase Firestore...
+              Verifying administrator session and security status...
             </p>
           </section>
         </div>
@@ -556,7 +524,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   }
 
   // ============================================================================
-  // UNAUTHENTICATED VIEW: SINGLE-ADMIN SETUP OR HARDENED LOGIN
+  // UNAUTHENTICATED VIEW: HARDENED SINGLE-ADMIN LOGIN ONLY
   // ============================================================================
 
   if (!session) {
@@ -579,16 +547,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
           <section className="rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                {configured ? <Lock className="w-5 h-5" /> : <Shield className="w-5 h-5" />}
+                <Lock className="w-5 h-5" />
               </div>
               <div>
                 <h1 className="font-display text-2xl font-bold text-slate-900 leading-tight">
-                  {configured ? 'Admin Sign In' : 'First-Time Admin Setup'}
+                  Admin Sign In
                 </h1>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  {configured
-                    ? 'Protected by Firebase Auth (server-side password hashing) & brute-force lockout'
-                    : 'Set up the authorized single administrator password'}
+                  Protected by Firebase Auth (server-side password hashing) & brute-force lockout
                 </p>
               </div>
             </div>
@@ -602,7 +568,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
               </div>
             )}
 
-            {configured && lockout.isLocked ? (
+            {lockout.isLocked ? (
               <div
                 role="alert"
                 className="mt-6 rounded-xl bg-red-50 border border-red-200 p-5 text-center"
@@ -618,93 +584,6 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   {formatMmSs(lockout.remainingMs)}
                 </p>
               </div>
-            ) : !configured ? (
-              <form onSubmit={handleFirstTimeSetup} className="mt-6 space-y-4" noValidate>
-                <div>
-                  <label htmlFor="setup-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Administrator Email
-                  </label>
-                  <input
-                    id="setup-email"
-                    type="email"
-                    autoComplete="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="Enter authorized administrator email"
-                    className="w-full min-h-[44px] px-3.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="setup-password" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Strong Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="setup-password"
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Min 12 chars with letters, numbers & symbols"
-                      className="w-full min-h-[44px] pl-3.5 pr-11 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((s) => !s)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-900"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-
-                  {/* Clean unboxed requirement checklist */}
-                  <ul className="mt-2.5 grid grid-cols-2 gap-1.5 text-xs font-medium">
-                    <li className={setupStrength.minLength ? 'text-emerald-700' : 'text-slate-500'}>
-                      {setupStrength.minLength ? '✓' : '·'} 12+ characters
-                    </li>
-                    <li className={setupStrength.hasLetter ? 'text-emerald-700' : 'text-slate-500'}>
-                      {setupStrength.hasLetter ? '✓' : '·'} Letters (A-Z)
-                    </li>
-                    <li className={setupStrength.hasNumber ? 'text-emerald-700' : 'text-slate-500'}>
-                      {setupStrength.hasNumber ? '✓' : '·'} Numbers (0-9)
-                    </li>
-                    <li className={setupStrength.hasSymbol ? 'text-emerald-700' : 'text-slate-500'}>
-                      {setupStrength.hasSymbol ? '✓' : '·'} Symbols (!@#$%)
-                    </li>
-                  </ul>
-                </div>
-
-                <div>
-                  <label htmlFor="setup-confirm" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Confirm Password
-                  </label>
-                  <input
-                    id="setup-confirm"
-                    type={showPassword ? 'text' : 'password'}
-                    autoComplete="new-password"
-                    value={confirmPasswordInput}
-                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                    placeholder="Re-enter strong password"
-                    className="w-full min-h-[44px] px-3.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                  />
-                </div>
-
-                {authError && (
-                  <p role="alert" className="text-xs text-red-600 font-semibold">
-                    {authError}
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={authSubmitting}
-                  className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold transition-colors"
-                >
-                  {authSubmitting ? 'Securing Account...' : 'Create Admin Account'}
-                </button>
-              </form>
             ) : (
               /* Hardened Single-Admin Login Form — ZERO password hints */
               <form onSubmit={handleLogin} className="mt-6 space-y-4" noValidate>

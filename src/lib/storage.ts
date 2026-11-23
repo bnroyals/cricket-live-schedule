@@ -1,5 +1,4 @@
 import {
-  createUserWithEmailAndPassword,
   EmailAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
@@ -31,7 +30,6 @@ import {
   constantTimeEqual,
   generateCleanSlug,
   generateRandomHex,
-  validateEmail,
   validateSafeText,
   validateStreamUrl,
   validateStrongPassword,
@@ -41,20 +39,18 @@ import { isMatchExpired } from './time';
 /**
  * Admin auth + data storage.
  *
- * The admin account and the matches / channels / audit data live in
+ * The single authorized admin account is pre-created in Firebase Auth
+ * (outside this app); the live app is login-only and never creates an admin
+ * account. Matches, channels, audit logs, and session epoch metadata live in
  * Firebase Auth + Firestore (server-side), NOT in browser localStorage.
- * localStorage is used only as a local cache for public content and for the
+ * localStorage is used only as a local cache for public content and for
  * lockout counters; the admin session lives in sessionStorage with a
  * 15-minute inactivity timeout. Clearing browser data therefore never
- * deletes the admin account: after clearing, the admin page still finds the
- * admin record in Firestore (admin/config) and asks for login, never for
- * setup again.
+ * affects the admin account or brings back any setup screen.
  *
  * Firestore rules (see firestore.rules, also published in the console):
  * public read-only for matches/channels, write only for the authenticated
- * admin biswajitcopy3@gmail.com. The admin/config document is readable by
- * everyone so the login page can tell setup from login; only the admin can
- * write it. security/lockout holds only failed-login counters.
+ * admin biswajitcopy3@gmail.com. security/lockout holds failed-login counters.
  */
 
 const KEYS = {
@@ -173,9 +169,8 @@ export function waitForFirebaseAuthReady(): Promise<User | null> {
 }
 
 /**
- * Ask Firestore whether an admin account exists. This is the ONLY place
- * that decides setup vs login, so clearing browser data can never bring
- * the setup screen back once an admin exists.
+ * Fetch the Firestore admin/config document (including sessionEpoch) to keep
+ * server-side session revocation metadata in sync.
  */
 export async function fetchAdminConfigured(): Promise<boolean> {
   if (adminConfigFetchPromise) return adminConfigFetchPromise;
@@ -568,58 +563,6 @@ function assertAuthorizedAdminSession(session: AdminSession | null): AdminSessio
   return active;
 }
 
-export async function setupFirstAdmin(emailInput: string, password: string, confirmPassword: string): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
-  const configured = await fetchAdminConfigured();
-  if (configured) {
-    return { ok: false, error: 'Admin account is already configured.' };
-  }
-  const emailCheck = validateEmail(emailInput);
-  if (!emailCheck.valid) {
-    return { ok: false, error: emailCheck.error || 'Enter a valid email address.' };
-  }
-  if (!constantTimeEqual(emailCheck.value, AUTHORIZED_ADMIN_EMAIL)) {
-    return { ok: false, error: 'Unauthorized email. Admin setup is restricted to the designated administrator account only.' };
-  }
-  const passwordCheck = validateStrongPassword(password);
-  if (!passwordCheck.valid) {
-    return { ok: false, error: passwordCheck.errors[0] || 'Password is not strong enough.' };
-  }
-  if (password !== confirmPassword) {
-    return { ok: false, error: 'Passwords do not match.' };
-  }
-  try {
-    const credential = await createUserWithEmailAndPassword(getFirebaseAuth(), AUTHORIZED_ADMIN_EMAIL, password);
-    const nowIso = new Date().toISOString();
-    const config: AdminConfigDoc = { email: AUTHORIZED_ADMIN_EMAIL, uid: credential.user.uid, sessionEpoch: 1, createdAt: nowIso, updatedAt: nowIso };
-    await setDoc(doc(getFirestoreDb(), 'admin', 'config'), config);
-    adminConfigCache = config;
-    adminConfigCacheAt = Date.now();
-    adminConfiguredCache = true;
-    safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, { failedAttempts: 0, lockedUntil: null });
-    const nowMs = Date.now();
-    const session: AdminSession = {
-      token: generateRandomHex(32),
-      email: AUTHORIZED_ADMIN_EMAIL,
-      sessionEpoch: 1,
-      issuedAt: nowMs,
-      lastActivityAt: nowMs,
-      expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
-    };
-    saveSession(session);
-    appendAuditLog('ADMIN_SETUP', 'Admin Account', AUTHORIZED_ADMIN_EMAIL, 'Initial admin account created in Firebase Auth + Firestore.');
-    return { ok: true, session };
-  } catch (error) {
-    const code = (error as { code?: string }).code || '';
-    if (code === 'auth/email-already-in-use') {
-      return { ok: false, error: 'Admin account is already configured.' };
-    }
-    if (code === 'auth/weak-password') {
-      return { ok: false, error: 'Password is too weak. Use at least 12 characters with upper and lower case letters, a number and a symbol.' };
-    }
-    return { ok: false, error: 'Could not create the admin account. Please try again.' };
-  }
-}
-
 function recordFailedLoginAttempt(nowMs: number, failedAttempts: number): { ok: false; error: string; lockedUntil?: number } {
   const attempts = failedAttempts + 1;
   const lockedUntil = attempts >= MAX_FAILED_ATTEMPTS ? nowMs + LOCKOUT_DURATION_MS : null;
@@ -663,11 +606,7 @@ export async function loginAdmin(emailInput: string, password: string): Promise<
     saveSession(session);
     appendAuditLog('ADMIN_LOGIN', 'Admin Panel', AUTHORIZED_ADMIN_EMAIL);
     return { ok: true, session };
-  } catch (error) {
-    const code = (error as { code?: string }).code || '';
-    if (code === 'auth/user-not-found') {
-      return { ok: false, error: 'Admin account is not set up yet.' };
-    }
+  } catch {
     return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
   }
 }
