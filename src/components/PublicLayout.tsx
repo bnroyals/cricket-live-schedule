@@ -8,8 +8,8 @@ interface PublicLayoutProps {
 }
 
 /**
- * Light-mode-only public layout shell for Home (/), Match Page (/match/<slug>), and Channels (/channels).
- * Deliberately contains ZERO links or references to /admin and NO dark/light toggle.
+ * Light-mode-only, English-only public layout shell for Home (/), Match Page (/match/<slug>), and Channels (/channels).
+ * Contains ZERO links to /admin, ZERO dark/light toggle, and ZERO storage notice.
  */
 export function PublicLayout({ pathname, children }: PublicLayoutProps) {
   const navigate = useNavigate();
@@ -50,7 +50,7 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
                   : 'text-slate-600 border-transparent hover:text-slate-900'
               }`}
             >
-              Schedule · शेड्यूल
+              Schedule
             </a>
             <a
               href="/channels"
@@ -61,7 +61,7 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
                   : 'text-slate-600 border-transparent hover:text-slate-900'
               }`}
             >
-              Channels · चैनल
+              Channels
             </a>
           </nav>
 
@@ -72,7 +72,7 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
               onClick={(e) => handleLinkClick(e, '/channels')}
               className="inline-flex items-center justify-center min-h-[40px] px-4 py-2 rounded-xl text-sm font-bold bg-emerald-700 text-white hover:bg-emerald-800 active:scale-[0.98] transition-all duration-150 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             >
-              Watch Live · देखें
+              Watch Live
             </a>
           </div>
         </div>
@@ -81,21 +81,19 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
       {/* Main Content */}
       <main className="flex-1">{children}</main>
 
-      {/* Quiet Light Footer — Explicitly states storage mode, zero admin links */}
+      {/* Quiet Light Footer — English only, zero storage notice, zero admin links */}
       <footer className="border-t border-slate-200 bg-white mt-16 py-8">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-600">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-slate-900 font-semibold">Cricket Live Schedule &amp; Watch</span>
             <span aria-hidden="true">·</span>
-            <span>All match timings in IST (UTC+5:30) · सभी समय भारतीय मानक समय में</span>
+            <span>All match timings shown in IST (UTC+5:30)</span>
           </div>
-          <div className="text-slate-600">
-            Storage: <span className="text-slate-900 font-semibold">localStorage</span> (Firebase Firestore unavailable)
-          </div>
+          <div className="text-slate-500">Worldwide Cricket Fixtures &amp; Broadcast Directory</div>
         </div>
       </footer>
 
-      {/* Mobile Bottom Tab Bar — Compact 56px light bar, thumb-zone ergonomics, zero admin link */}
+      {/* Mobile Bottom Tab Bar — Compact 56px light bar, zero admin link */}
       <nav
         aria-label="Mobile navigation"
         className="sm:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-2"
@@ -108,7 +106,7 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
           }`}
         >
           <Calendar className="w-5 h-5" aria-hidden="true" />
-          <span className="whitespace-nowrap">Schedule · शेड्यूल</span>
+          <span className="whitespace-nowrap">Schedule</span>
         </a>
         <a
           href="/channels"
@@ -118,7 +116,7 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
           }`}
         >
           <Tv className="w-5 h-5" aria-hidden="true" />
-          <span className="whitespace-nowrap">Channels · चैनल</span>
+          <span className="whitespace-nowrap">Channels</span>
         </a>
       </nav>
     </div>

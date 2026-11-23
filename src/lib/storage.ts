@@ -33,6 +33,11 @@ const KEYS = {
 
 const SESSION_STORAGE_KEY = 'clsw_admin_session_v1';
 
+/**
+ * Single authorized administrator email. No other admin account can be registered or sign in.
+ */
+export const AUTHORIZED_ADMIN_EMAIL = 'biswajitcopy3@gmail.com';
+
 export const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 export const MAX_FAILED_ATTEMPTS = 5;
@@ -49,7 +54,7 @@ const SEED_CHANNELS: Channel[] = [
   {
     id: 'sony-sports-ten-three',
     name: 'Sony Sports Ten 3',
-    language: 'Hindi',
+    language: 'English',
     streamUrl: '',
     createdAt: '2026-11-22T00:00:00.000Z',
     updatedAt: '2026-11-22T00:00:00.000Z',
@@ -126,6 +131,33 @@ function notifyDataChanged(): void {
 }
 
 /**
+ * Ensures any previously stored non-authorized admin record is purged,
+ * and cleans up any legacy non-English channel tags in localStorage.
+ */
+function enforceSingleAdminAndEnglishData(): void {
+  const existingAdmin = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
+  if (existingAdmin && existingAdmin.email.trim().toLowerCase() !== AUTHORIZED_ADMIN_EMAIL) {
+    window.localStorage.removeItem(KEYS.ADMIN_AUTH);
+    window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  }
+
+  const existingChannels = safeReadJson<Channel[] | null>(KEYS.CHANNELS, null);
+  if (existingChannels) {
+    let changed = false;
+    const normalized = existingChannels.map((ch) => {
+      if (ch.language.trim().toLowerCase() === 'hindi') {
+        changed = true;
+        return { ...ch, language: 'English' };
+      }
+      return ch;
+    });
+    if (changed) {
+      safeWriteJson(KEYS.CHANNELS, normalized);
+    }
+  }
+}
+
+/**
  * Initializes seed data once on first visit. Channels are permanent.
  */
 export function ensureSeedData(): void {
@@ -136,12 +168,12 @@ export function ensureSeedData(): void {
     safeWriteJson(KEYS.EXPIRED_SLUGS, []);
     window.localStorage.setItem(KEYS.SEEDED, 'true');
   } else {
-    // Guarantee channels array exists
     const existingChannels = safeReadJson<Channel[] | null>(KEYS.CHANNELS, null);
     if (!existingChannels) {
       safeWriteJson(KEYS.CHANNELS, SEED_CHANNELS);
     }
   }
+  enforceSingleAdminAndEnglishData();
 }
 
 /**
@@ -202,12 +234,18 @@ export function getPublicChannels(): Channel[] {
 }
 
 // ============================================================================
-// ADMIN AUTHENTICATION, BRUTE-FORCE LOCKOUT & SESSION MANAGEMENT
+// SINGLE-ADMIN AUTHENTICATION, BRUTE-FORCE LOCKOUT & SESSION MANAGEMENT
 // ============================================================================
 
 export function isAdminConfigured(): boolean {
+  enforceSingleAdminAndEnglishData();
   const record = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  return Boolean(record && record.email && record.passwordHash && record.salt);
+  return Boolean(
+    record &&
+      record.email.trim().toLowerCase() === AUTHORIZED_ADMIN_EMAIL &&
+      record.passwordHash &&
+      record.salt
+  );
 }
 
 export function getLockoutState(nowMs: number = Date.now()): {
@@ -228,7 +266,6 @@ export function getLockoutState(nowMs: number = Date.now()): {
     };
   }
 
-  // Clear expired lockout automatically
   if (state.lockedUntil && nowMs >= state.lockedUntil) {
     safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
       failedAttempts: 0,
@@ -272,20 +309,20 @@ function saveSession(session: AdminSession | null): void {
 
 export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession | null {
   try {
+    enforceSingleAdminAndEnglishData();
     const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw) as AdminSession;
     const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
 
-    if (!authRecord) {
+    if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
       saveSession(null);
       return null;
     }
 
-    // Verify epoch (supports "log out all sessions") and email integrity
     if (
       session.sessionEpoch !== authRecord.sessionEpoch ||
-      session.email !== authRecord.email
+      session.email !== AUTHORIZED_ADMIN_EMAIL
     ) {
       saveSession(null);
       return null;
@@ -323,12 +360,12 @@ export function touchAdminSession(nowMs: number = Date.now()): AdminSession | nu
 }
 
 /**
- * Strict write-guard mirroring Firestore security rules:
- * Public viewers can NEVER execute any write mutation.
+ * Strict write-guard: public viewers can NEVER execute any write mutation,
+ * and only the single authorized administrator can write.
  */
 function assertAuthorizedAdminSession(providedSession: AdminSession | null): AdminSession {
   const active = getActiveAdminSession();
-  if (!active || !providedSession) {
+  if (!active || !providedSession || active.email !== AUTHORIZED_ADMIN_EMAIL) {
     throw new Error('Unauthorized: Authenticated admin session required.');
   }
   if (
@@ -340,6 +377,10 @@ function assertAuthorizedAdminSession(providedSession: AdminSession | null): Adm
   return touchAdminSession() ?? active;
 }
 
+/**
+ * First-time admin setup: strictly allows ONLY biswajitcopy3@gmail.com.
+ * Refuses every other email and refuses creating a second admin once configured.
+ */
 export async function setupFirstAdmin(
   emailInput: string,
   password: string,
@@ -352,6 +393,13 @@ export async function setupFirstAdmin(
   const emailCheck = validateEmail(emailInput);
   if (!emailCheck.valid) {
     return { ok: false, error: emailCheck.error || 'Invalid email.' };
+  }
+
+  if (!constantTimeEqual(emailCheck.value, AUTHORIZED_ADMIN_EMAIL)) {
+    return {
+      ok: false,
+      error: 'Unauthorized email. Admin setup is restricted to the designated administrator account only.',
+    };
   }
 
   const pwCheck = validateStrongPassword(password);
@@ -369,7 +417,7 @@ export async function setupFirstAdmin(
   const nowIso = new Date().toISOString();
 
   const record: AdminAuthRecord = {
-    email: emailCheck.value,
+    email: AUTHORIZED_ADMIN_EMAIL,
     passwordHash,
     salt,
     iterations,
@@ -384,7 +432,7 @@ export async function setupFirstAdmin(
   const nowMs = Date.now();
   const session: AdminSession = {
     token: generateRandomHex(32),
-    email: record.email,
+    email: AUTHORIZED_ADMIN_EMAIL,
     sessionEpoch: record.sessionEpoch,
     issuedAt: nowMs,
     lastActivityAt: nowMs,
@@ -392,10 +440,43 @@ export async function setupFirstAdmin(
   };
   saveSession(session);
 
-  appendAuditLog('ADMIN_SETUP', 'Admin Account', record.email, 'Initial admin credentials configured');
+  appendAuditLog('ADMIN_SETUP', 'Admin Account', AUTHORIZED_ADMIN_EMAIL, 'Initial admin credentials configured');
   return { ok: true, session };
 }
 
+function recordFailedLoginAttempt(
+  nowMs: number,
+  currentFailedAttempts: number
+): { ok: false; error: string; lockedUntil?: number | null } {
+  const nextFailed = currentFailedAttempts + 1;
+  if (nextFailed >= MAX_FAILED_ATTEMPTS) {
+    const lockedUntil = nowMs + LOCKOUT_DURATION_MS;
+    safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
+      failedAttempts: nextFailed,
+      lockedUntil,
+    });
+    return {
+      ok: false,
+      error: 'Login locked for 15 minutes due to 5 failed attempts.',
+      lockedUntil,
+    };
+  }
+
+  safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
+    failedAttempts: nextFailed,
+    lockedUntil: null,
+  });
+  return {
+    ok: false,
+    error: 'Login failed. Invalid email or password.',
+  };
+}
+
+/**
+ * Hardened single-admin login:
+ * Checks email against AUTHORIZED_ADMIN_EMAIL FIRST before any password verification.
+ * Returns a generic login-failed message for any other email or invalid password.
+ */
 export async function loginAdmin(
   emailInput: string,
   password: string
@@ -413,59 +494,40 @@ export async function loginAdmin(
     };
   }
 
+  // Step 1: Check email FIRST before any password verification
+  const emailNorm = emailInput.trim().toLowerCase();
+  if (!constantTimeEqual(emailNorm, AUTHORIZED_ADMIN_EMAIL)) {
+    return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
+  }
+
   const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (!authRecord) {
+  if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
     return { ok: false, error: 'Admin account is not set up yet.' };
   }
 
-  const emailNorm = emailInput.trim().toLowerCase();
+  // Step 2: Verify password hash only for the authorized admin email
   const candidateHash = await hashPasswordSha256(
     password,
     authRecord.salt,
     authRecord.iterations
   );
 
-  const emailMatches = constantTimeEqual(emailNorm, authRecord.email);
-  const passwordMatches = constantTimeEqual(candidateHash, authRecord.passwordHash);
-
-  if (!emailMatches || !passwordMatches) {
-    const nextFailed = lockout.failedAttempts + 1;
-    if (nextFailed >= MAX_FAILED_ATTEMPTS) {
-      const lockedUntil = nowMs + LOCKOUT_DURATION_MS;
-      safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-        failedAttempts: nextFailed,
-        lockedUntil,
-      });
-      return {
-        ok: false,
-        error: 'Login locked for 15 minutes due to 5 failed attempts.',
-        lockedUntil,
-      };
-    }
-
-    safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-      failedAttempts: nextFailed,
-      lockedUntil: null,
-    });
-    const remaining = MAX_FAILED_ATTEMPTS - nextFailed;
-    return {
-      ok: false,
-      error: `Invalid email or password. ${remaining} attempt${remaining === 1 ? '' : 's'} left before 15-minute lock.`,
-    };
+  if (!constantTimeEqual(candidateHash, authRecord.passwordHash)) {
+    return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
   }
 
   // Successful login resets lockout
   safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, { failedAttempts: 0, lockedUntil: null });
   const session: AdminSession = {
     token: generateRandomHex(32),
-    email: authRecord.email,
+    email: AUTHORIZED_ADMIN_EMAIL,
     sessionEpoch: authRecord.sessionEpoch,
     issuedAt: nowMs,
     lastActivityAt: nowMs,
     expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
   };
   saveSession(session);
-  appendAuditLog('ADMIN_LOGIN', 'Admin Panel', authRecord.email);
+  appendAuditLog('ADMIN_LOGIN', 'Admin Panel', AUTHORIZED_ADMIN_EMAIL);
   return { ok: true, session };
 }
 
@@ -483,7 +545,7 @@ export function logoutAdmin(session: AdminSession | null): void {
 export function logoutAllAdminSessions(session: AdminSession | null): void {
   const verified = assertAuthorizedAdminSession(session);
   const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (authRecord) {
+  if (authRecord && authRecord.email === AUTHORIZED_ADMIN_EMAIL) {
     const updated: AdminAuthRecord = {
       ...authRecord,
       sessionEpoch: authRecord.sessionEpoch + 1,
@@ -509,7 +571,7 @@ export async function adminChangePassword(
 ): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
   const verified = assertAuthorizedAdminSession(session);
   const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (!authRecord) {
+  if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
     return { ok: false, error: 'Admin account not found.' };
   }
 
@@ -553,7 +615,7 @@ export async function adminChangePassword(
   const nowMs = Date.now();
   const nextSession: AdminSession = {
     token: generateRandomHex(32),
-    email: updatedRecord.email,
+    email: AUTHORIZED_ADMIN_EMAIL,
     sessionEpoch: nextEpoch,
     issuedAt: nowMs,
     lastActivityAt: nowMs,

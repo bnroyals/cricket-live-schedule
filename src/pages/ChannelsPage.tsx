@@ -18,19 +18,19 @@ export function ChannelsPage({ channels }: ChannelsPageProps) {
         className="inline-flex items-center gap-2 min-h-[44px] text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-        <span>Back to Schedule · शेड्यूल पर वापस जाएँ</span>
+        <span>Back to Schedule</span>
       </button>
 
       <div className="mt-3 pb-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <p className="text-xs font-bold text-emerald-700">
-            Permanent Broadcast Directory · लाइव टीवी चैनल
+            Permanent Broadcast Directory
           </p>
           <h1 className="font-display text-3xl sm:text-5xl font-extrabold text-slate-900 tracking-tight mt-1">
             Live Cricket Channels
           </h1>
           <p className="text-sm text-slate-600 mt-1.5">
-            Select any channel below to open the live stream in a new tab · लाइव स्ट्रीम देखने के लिए चैनल चुनें
+            Select any channel below to open the live stream in a new tab.
           </p>
         </div>
         <span className="text-xs font-semibold text-slate-500 font-mono-tabular whitespace-nowrap">
@@ -50,6 +50,8 @@ export function ChannelsPage({ channels }: ChannelsPageProps) {
           {channels.map((channel) => {
             const safeUrl = getSafeExternalUrl(channel.streamUrl);
             const hasUrl = Boolean(safeUrl);
+            const displayLang =
+              channel.language.trim().toLowerCase() === 'hindi' ? 'English' : channel.language;
 
             return (
               <article
@@ -65,10 +67,10 @@ export function ChannelsPage({ channels }: ChannelsPageProps) {
                       {channel.name}
                     </h2>
                     <p className="text-xs text-slate-600 mt-1">
-                      <span className="font-semibold text-slate-800">{channel.language}</span>
+                      <span className="font-semibold text-slate-800">{displayLang}</span>
                       <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
                       <span className={hasUrl ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-medium'}>
-                        {hasUrl ? 'Stream ready · स्ट्रीम तैयार' : 'Link pending · लिंक प्रतीक्षारत'}
+                        {hasUrl ? 'Stream ready' : 'Link pending'}
                       </span>
                     </p>
                   </div>
@@ -81,7 +83,7 @@ export function ChannelsPage({ channels }: ChannelsPageProps) {
                     rel="noopener noreferrer"
                     className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
                   >
-                    <span>Watch · देखें</span>
+                    <span>Watch</span>
                     <ExternalLink className="w-4 h-4" aria-hidden="true" />
                   </a>
                 ) : (
@@ -91,7 +93,7 @@ export function ChannelsPage({ channels }: ChannelsPageProps) {
                     aria-disabled="true"
                     className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap cursor-not-allowed"
                   >
-                    <span>Stream URL Not Set · लिंक सेट नहीं</span>
+                    <span>Stream URL Not Set</span>
                   </button>
                 )}
               </article>

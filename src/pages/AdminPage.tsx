@@ -284,7 +284,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   };
 
   // ============================================================================
-  // MATCH CRUD HANDLERS (Custom React validation — zero broken native tooltips)
+  // MATCH CRUD HANDLERS
   // ============================================================================
 
   const handleMatchSubmit = (e: React.FormEvent) => {
@@ -408,7 +408,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     setEditingChannelId(ch.id);
     setChannelForm({
       name: ch.name,
-      language: ch.language,
+      language: ch.language.trim().toLowerCase() === 'hindi' ? 'English' : ch.language,
       streamUrl: ch.streamUrl,
     });
     setFeedback(null);
@@ -473,7 +473,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   };
 
   // ============================================================================
-  // UNAUTHENTICATED VIEW: FIRST-TIME SETUP OR HARDENED LOGIN (LIGHT MODE)
+  // UNAUTHENTICATED VIEW: SINGLE-ADMIN SETUP OR HARDENED LOGIN
   // ============================================================================
 
   if (!session) {
@@ -500,14 +500,12 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
               </div>
               <div>
                 <h1 className="font-display text-2xl font-bold text-slate-900 leading-tight">
-                  {configured
-                    ? 'Admin Sign In · एडमिन लॉगिन'
-                    : 'First-Time Admin Setup · एडमिन सेटअप'}
+                  {configured ? 'Admin Sign In' : 'First-Time Admin Setup'}
                 </h1>
                 <p className="text-xs text-slate-600 mt-0.5">
                   {configured
                     ? 'Protected by SHA-256 hashing & brute-force lockout'
-                    : 'Create your admin email and strong password'}
+                    : 'Set up the authorized single administrator password'}
                 </p>
               </div>
             </div>
@@ -541,7 +539,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
               <form onSubmit={handleFirstTimeSetup} className="mt-6 space-y-4" noValidate>
                 <div>
                   <label htmlFor="setup-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Admin Email · एडमिन ईमेल
+                    Administrator Email
                   </label>
                   <input
                     id="setup-email"
@@ -549,14 +547,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                     autoComplete="email"
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="admin@example.com"
+                    placeholder="Enter authorized administrator email"
                     className="w-full min-h-[44px] px-3.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label htmlFor="setup-password" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Strong Password · मजबूत पासवर्ड
+                    Strong Password
                   </label>
                   <div className="relative">
                     <input
@@ -597,7 +595,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
 
                 <div>
                   <label htmlFor="setup-confirm" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Confirm Password · पासवर्ड की पुष्टि करें
+                    Confirm Password
                   </label>
                   <input
                     id="setup-confirm"
@@ -625,11 +623,11 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 </button>
               </form>
             ) : (
-              /* Hardened Login Form — ZERO password hints */
+              /* Hardened Single-Admin Login Form — ZERO password hints */
               <form onSubmit={handleLogin} className="mt-6 space-y-4" noValidate>
                 <div>
                   <label htmlFor="login-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Admin Email · एडमिन ईमेल
+                    Administrator Email
                   </label>
                   <input
                     id="login-email"
@@ -643,7 +641,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
 
                 <div>
                   <label htmlFor="login-password" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Password · पासवर्ड
+                    Password
                   </label>
                   <div className="relative">
                     <input
@@ -676,7 +674,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   disabled={authSubmitting}
                   className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold transition-colors"
                 >
-                  {authSubmitting ? 'Verifying...' : 'Sign In · लॉगिन करें'}
+                  {authSubmitting ? 'Verifying...' : 'Sign In'}
                 </button>
               </form>
             )}
@@ -691,7 +689,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   }
 
   // ============================================================================
-  // AUTHENTICATED ADMIN DASHBOARD (LIGHT MODE ONLY)
+  // AUTHENTICATED ADMIN DASHBOARD (LIGHT MODE ONLY, ENGLISH ONLY)
   // ============================================================================
 
   return (
@@ -743,12 +741,12 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        {/* Storage & Security Status Line */}
+        {/* Storage & Security Status Line — Shown ONLY inside Admin Panel */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-5 border-b border-slate-200 text-xs text-slate-600">
           <div>
             Storage: <span className="text-slate-900 font-bold">localStorage</span> (Firebase Firestore unavailable)
             <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
-            <span>Public read-only · Authenticated admin write</span>
+            <span>Public read-only · Single-admin authenticated write</span>
           </div>
           <div className="font-mono-tabular font-semibold text-slate-800 sm:hidden">
             {session.email} · Auto-logout in {formatMmSs(remainingSessionMs)}
@@ -853,11 +851,10 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         {/* ================================================================ */}
         {activeTab === 'matches' && (
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Match Form — noValidate disables buggy native browser tooltips; custom validation handles every field */}
             <section className="lg:col-span-5 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-display text-2xl font-bold text-slate-900">
-                  {editingMatchId ? 'Edit Match · मैच संपादित करें' : 'Schedule New Match · नया मैच जोड़ें'}
+                  {editingMatchId ? 'Edit Match' : 'Schedule New Match'}
                 </h2>
                 {editingMatchId && (
                   <button
@@ -953,9 +950,9 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                       }
                       className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
                     >
-                      <option value="Upcoming">Upcoming · आगामी</option>
-                      <option value="LIVE">LIVE · लाइव</option>
-                      <option value="Finished">Finished · समाप्त</option>
+                      <option value="Upcoming">Upcoming</option>
+                      <option value="LIVE">LIVE</option>
+                      <option value="Finished">Finished</option>
                     </select>
                   </div>
                 </div>
@@ -1041,9 +1038,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                             onChange={() => toggleMatchChannel(ch.id)}
                             className="accent-emerald-700"
                           />
-                          <span className="truncate">
-                            {ch.name} ({ch.language})
-                          </span>
+                          <span className="truncate">{ch.name}</span>
                         </label>
                       );
                     })}
@@ -1064,7 +1059,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
             <section className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-200">
                 <h2 className="font-display text-2xl font-bold text-slate-900">
-                  Scheduled Matches · निर्धारित मैच
+                  Scheduled Matches
                 </h2>
                 <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
                   {matches.length} active
@@ -1170,7 +1165,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
             <section className="lg:col-span-5 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-display text-2xl font-bold text-slate-900">
-                  {editingChannelId ? 'Edit Channel · चैनल संपादित करें' : 'Add Channel · नया चैनल'}
+                  {editingChannelId ? 'Edit Channel' : 'Add Channel'}
                 </h2>
                 {editingChannelId && (
                   <button
@@ -1215,7 +1210,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                     maxLength={40}
                     value={channelForm.language}
                     onChange={(e) => setChannelForm((f) => ({ ...f, language: e.target.value }))}
-                    placeholder="e.g. Hindi / English"
+                    placeholder="e.g. English"
                     className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
@@ -1248,7 +1243,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
             <section className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-200">
                 <h2 className="font-display text-2xl font-bold text-slate-900">
-                  Permanent Channels · स्थायी चैनल
+                  Permanent Channels
                 </h2>
                 <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
                   {channels.length} total
@@ -1258,12 +1253,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
               <div className="divide-y divide-slate-200 mt-2">
                 {channels.map((ch) => {
                   const confirming = confirmDeleteChannelId === ch.id;
+                  const displayLang =
+                    ch.language.trim().toLowerCase() === 'hindi' ? 'English' : ch.language;
                   return (
                     <div key={ch.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="min-w-0">
                         <h3 className="text-base font-bold text-slate-900">{ch.name}</h3>
                         <p className="text-xs text-slate-600 mt-0.5 truncate">
-                          <span className="font-semibold text-slate-800">{ch.language}</span>
+                          <span className="font-semibold text-slate-800">{displayLang}</span>
                           <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
                           <span className={ch.streamUrl ? 'text-emerald-700 font-medium' : 'text-amber-700'}>
                             {ch.streamUrl ? ch.streamUrl : 'Empty placeholder URL'}
@@ -1325,7 +1322,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-200">
               <div>
                 <h2 className="font-display text-2xl font-bold text-slate-900">
-                  Admin Audit Log · ऑडिट लॉग
+                  Admin Audit Log
                 </h2>
                 <p className="text-xs text-slate-600 mt-0.5">
                   Records every authenticated admin action. Visible strictly inside the Admin Panel.
@@ -1383,7 +1380,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             <section className="rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
               <h2 className="font-display text-2xl font-bold text-slate-900">
-                Change Password · पासवर्ड बदलें
+                Change Password
               </h2>
               <p className="text-xs text-slate-600 mt-1">
                 Changing your password rotates the SHA-256 salt and invalidates all other sessions.
@@ -1463,7 +1460,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   Session &amp; Access Controls
                 </h2>
                 <p className="text-xs text-slate-600 mt-1">
-                  Active account: <span className="text-slate-900 font-semibold">{session.email}</span>
+                  Authorized administrator: <span className="text-slate-900 font-semibold">{session.email}</span>
                 </p>
               </div>
 
@@ -1481,6 +1478,10 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-600">Brute-Force Lockout</dt>
                   <dd className="text-slate-900 font-medium">5 attempts → 15 min lock</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-slate-600">Admin Account Policy</dt>
+                  <dd className="text-slate-900 font-medium">Single authorized account only</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-600">Public Access Policy</dt>

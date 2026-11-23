@@ -24,11 +24,10 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-16">
         <div className="rounded-2xl bg-white border border-slate-200 shadow-xs p-8 sm:p-12 text-center">
-          <p className="text-xs font-semibold text-amber-700">Match Notice · मैच सूचना</p>
+          <p className="text-xs font-semibold text-amber-700">Match Notice</p>
           <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-slate-900 mt-2">
             Match ended
           </h1>
-          <p className="text-base text-slate-700 font-medium mt-1">मैच समाप्त हो गया है</p>
           <p className="text-sm text-slate-600 mt-4 max-w-md mx-auto leading-relaxed">
             This match page has expired and been automatically removed 30 minutes after the match end time.
           </p>
@@ -39,7 +38,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold whitespace-nowrap transition-colors"
             >
               <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-              <span>Back to Schedule · शेड्यूल पर वापस जाएँ</span>
+              <span>Back to Schedule</span>
             </button>
             <button
               type="button"
@@ -47,7 +46,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold whitespace-nowrap transition-colors"
             >
               <Tv className="w-4 h-4" aria-hidden="true" />
-              <span>Browse Channels · चैनल देखें</span>
+              <span>Browse Channels</span>
             </button>
           </div>
         </div>
@@ -73,7 +72,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
         className="inline-flex items-center gap-2 min-h-[44px] text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-        <span>All Matches · सभी मैच</span>
+        <span>All Matches</span>
       </button>
 
       {/* Main Match Card */}
@@ -98,9 +97,9 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                   : 'text-emerald-700'
             }`}
           >
-            {effectiveStatus === 'LIVE' && 'LIVE NOW · अभी लाइव'}
-            {effectiveStatus === 'Upcoming' && 'UPCOMING · आगामी'}
-            {effectiveStatus === 'Finished' && 'FINISHED · समाप्त'}
+            {effectiveStatus === 'LIVE' && 'LIVE NOW'}
+            {effectiveStatus === 'Upcoming' && 'UPCOMING'}
+            {effectiveStatus === 'Finished' && 'FINISHED'}
           </div>
         </div>
 
@@ -117,7 +116,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
             {effectiveStatus === 'Upcoming' && !countdown.isStarted ? (
               <div>
                 <p className="text-xs font-semibold text-slate-600">
-                  Match starts in · मैच शुरू होने में समय
+                  Match starts in
                 </p>
                 <div className="mt-2 inline-flex items-baseline gap-4 sm:gap-6 font-mono-tabular">
                   {countdown.days > 0 && (
@@ -126,7 +125,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                         {String(countdown.days).padStart(2, '0')}
                       </span>
                       <span className="block text-[11px] text-slate-500 font-sans mt-0.5">
-                        Days · दिन
+                        Days
                       </span>
                     </div>
                   )}
@@ -135,7 +134,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                       {String(countdown.hours).padStart(2, '0')}
                     </span>
                     <span className="block text-[11px] text-slate-500 font-sans mt-0.5">
-                      Hrs · घंटे
+                      Hrs
                     </span>
                   </div>
                   <div>
@@ -143,7 +142,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                       {String(countdown.minutes).padStart(2, '0')}
                     </span>
                     <span className="block text-[11px] text-slate-500 font-sans mt-0.5">
-                      Min · मिनट
+                      Min
                     </span>
                   </div>
                   <div>
@@ -151,7 +150,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                       {String(countdown.seconds).padStart(2, '0')}
                     </span>
                     <span className="block text-[11px] text-slate-500 font-sans mt-0.5">
-                      Sec · सेकंड
+                      Sec
                     </span>
                   </div>
                 </div>
@@ -159,7 +158,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
             ) : effectiveStatus === 'LIVE' ? (
               <div>
                 <p className="text-lg sm:text-xl font-bold text-red-600">
-                  Match is LIVE now · मैच अभी लाइव चल रहा है
+                  Match is LIVE now
                 </p>
                 <p className="text-xs sm:text-sm text-slate-600 mt-1">
                   Tap Watch below to choose your live broadcast channel.
@@ -168,7 +167,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
             ) : (
               <div>
                 <p className="text-base font-bold text-slate-800">
-                  Match finished · मैच समाप्त हो गया
+                  Match finished
                 </p>
                 <p className="text-xs text-slate-500 mt-1 font-mono-tabular">
                   This match page auto-deletes in ~{minutesUntilAutoDelete} min
@@ -183,7 +182,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
           <div>
             <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
               <Calendar className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
-              <span>Date · तारीख</span>
+              <span>Date</span>
             </dt>
             <dd className="mt-1 font-bold text-slate-900">{formatDisplayDate(match.date)}</dd>
           </div>
@@ -191,7 +190,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
           <div>
             <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
               <Clock className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
-              <span>Timing (IST) · समय</span>
+              <span>Timing (IST)</span>
             </dt>
             <dd className="mt-1 font-mono-tabular font-bold text-slate-900">
               {formatIstTime(match.startTime)} – {formatIstTime(match.endTime)}
@@ -201,22 +200,20 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
           <div>
             <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
               <MapPin className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
-              <span>Venue · मैदान</span>
+              <span>Venue</span>
             </dt>
             <dd className="mt-1 font-bold text-slate-900">{match.venue}</dd>
           </div>
         </dl>
 
-        {/* Broadcast Channels Listing */}
+        {/* Broadcast Channels Listing — Clean English channel names only */}
         {assignedChannels.length > 0 && (
           <div className="mt-6 pt-6 border-t border-slate-200">
             <p className="text-xs font-medium text-slate-500">
-              Broadcast Channels · प्रसारण चैनल
+              Broadcast Channels
             </p>
             <p className="mt-1.5 text-sm font-semibold text-slate-800">
-              {assignedChannels
-                .map((ch) => `${ch.name} (${ch.language})`)
-                .join('  ·  ')}
+              {assignedChannels.map((ch) => ch.name).join('  ·  ')}
             </p>
           </div>
         )}
@@ -229,7 +226,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
             className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
           >
             <Play className="w-5 h-5 fill-current" aria-hidden="true" />
-            <span>Watch Live on Channels · लाइव चैनल पर देखें</span>
+            <span>Watch Live on Channels</span>
           </button>
         </div>
       </section>

@@ -18,14 +18,14 @@ interface HomePageProps {
 
 type DateFilterMode = 'today' | 'tomorrow' | 'custom' | 'all';
 
-function getStatusBilingual(status: MatchStatus): string {
+function getStatusLabel(status: MatchStatus): string {
   switch (status) {
     case 'LIVE':
-      return 'LIVE · लाइव';
+      return 'LIVE';
     case 'Finished':
-      return 'Finished · समाप्त';
+      return 'Finished';
     default:
-      return 'Upcoming · आगामी';
+      return 'Upcoming';
   }
 }
 
@@ -83,7 +83,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
         <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between gap-5">
           <div>
             <p className="text-xs sm:text-sm font-bold text-emerald-700">
-              Worldwide Match Centre · विश्व क्रिकेट लाइव शेड्यूल
+              Worldwide Match Centre
             </p>
             <h1 className="font-display text-4xl sm:text-5xl font-extrabold tracking-tight text-slate-900 mt-1.5 leading-[1.03]">
               Cricket Live Schedule &amp; Watch
@@ -100,9 +100,9 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
               </span>
               <span className="text-slate-300" aria-hidden="true">·</span>
               {liveCount > 0 ? (
-                <span className="text-red-600 font-bold">{liveCount} LIVE now · अभी लाइव</span>
+                <span className="text-red-600 font-bold">{liveCount} LIVE now</span>
               ) : (
-                <span className="text-amber-700 font-semibold">IST timings · भारतीय समय</span>
+                <span className="text-amber-700 font-semibold">IST timings</span>
               )}
             </div>
             <div className="text-xs text-slate-500 font-mono-tabular">
@@ -152,7 +152,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                 : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            Today · आज
+            Today
           </button>
           <button
             type="button"
@@ -168,7 +168,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                 : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            Tomorrow · कल
+            Tomorrow
           </button>
           <button
             type="button"
@@ -181,14 +181,14 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                 : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            All · सभी
+            All
           </button>
         </div>
 
         {/* Date Picker */}
         <label className="flex items-center gap-2.5 px-3.5 min-h-[44px] rounded-xl bg-white border border-slate-200 shadow-xs text-sm text-slate-700 focus-within:border-emerald-600 transition-colors">
           <Calendar className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
-          <span className="text-xs font-medium text-slate-500 whitespace-nowrap">Pick Date · तारीख</span>
+          <span className="text-xs font-medium text-slate-500 whitespace-nowrap">Pick Date</span>
           <input
             type="date"
             value={selectedDate}
@@ -202,10 +202,10 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
       {/* Active Filter Summary */}
       <div className="mt-6 flex items-center justify-between border-b border-slate-200 pb-3">
         <h2 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-wide">
-          {filterMode === 'today' && `Today's Matches · आज के मैच`}
-          {filterMode === 'tomorrow' && `Tomorrow's Matches · कल के मैच`}
+          {filterMode === 'today' && `Today's Matches`}
+          {filterMode === 'tomorrow' && `Tomorrow's Matches`}
           {filterMode === 'custom' && `Matches on ${formatDisplayDate(selectedDate)}`}
-          {filterMode === 'all' && `All Scheduled Matches · सभी निर्धारित मैच`}
+          {filterMode === 'all' && `All Scheduled Matches`}
         </h2>
         <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
           {filteredMatches.length} {filteredMatches.length === 1 ? 'match' : 'matches'}
@@ -216,7 +216,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
       {filteredMatches.length === 0 ? (
         <div className="mt-8 rounded-2xl bg-white border border-slate-200 p-8 sm:p-12 text-center shadow-xs">
           <p className="text-lg font-bold text-slate-900">
-            No matches scheduled for this date · इस तारीख को कोई मैच नहीं है
+            No matches scheduled for this date
           </p>
           <p className="text-sm text-slate-600 mt-2 max-w-md mx-auto">
             Try switching to Today, Tomorrow, or view all scheduled fixtures.
@@ -227,7 +227,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
               onClick={() => setFilterMode('all')}
               className="mt-5 inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold transition-colors"
             >
-              Show All Scheduled Matches · सभी मैच देखें
+              Show All Scheduled Matches
             </button>
           )}
         </div>
@@ -265,7 +265,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                             : 'text-emerald-700'
                       }`}
                     >
-                      {getStatusBilingual(effectiveStatus)}
+                      {getStatusLabel(effectiveStatus)}
                     </span>
                   </div>
 
@@ -298,10 +298,13 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                   <div className="text-xs text-slate-600 truncate max-w-[240px] sm:max-w-[280px]">
                     {assignedChannels.length > 0 ? (
                       <span>
-                        TV: <span className="text-slate-800 font-medium">{assignedChannels.map((c) => c.name).join(' · ')}</span>
+                        TV:{' '}
+                        <span className="text-slate-800 font-medium">
+                          {assignedChannels.map((c) => c.name).join(' · ')}
+                        </span>
                       </span>
                     ) : (
-                      <span>Channels available · चैनल उपलब्ध</span>
+                      <span>Channels available</span>
                     )}
                   </div>
 
@@ -311,7 +314,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                     className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold whitespace-nowrap shrink-0 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
                   >
                     <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                    <span>Watch · देखें</span>
+                    <span>Watch</span>
                     <ChevronRight className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
