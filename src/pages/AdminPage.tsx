@@ -32,15 +32,19 @@ import {
   adminGetAuditLog,
   adminUpdateChannel,
   adminUpdateMatch,
+  fetchAdminConfigured,
+  fetchAuditLog,
+  fetchLockoutState,
   getActiveAdminSession,
   getLockoutState,
   INACTIVITY_TIMEOUT_MS,
-  isAdminConfigured,
   loginAdmin,
   logoutAdmin,
   logoutAllAdminSessions,
+  refreshPublicDataFromFirestore,
   setupFirstAdmin,
   touchAdminSession,
+  waitForFirebaseAuthReady,
 } from '../lib/storage';
 import { generateCleanSlug, validateStrongPassword } from '../lib/security';
 import {
@@ -85,8 +89,11 @@ const EMPTY_CHANNEL_FORM = {
 export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) {
   const navigate = useNavigate();
 
-  const [configured, setConfigured] = useState<boolean>(() => isAdminConfigured());
-  const [session, setSession] = useState<AdminSession | null>(() => getActiveAdminSession());
+  // Always resolve setup vs login from Firestore (fetchAdminConfigured) and wait for Firebase Auth
+  // to restore before deciding on an existing session — never decide from localStorage.
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [configured, setConfigured] = useState<boolean>(false);
+  const [session, setSession] = useState<AdminSession | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
@@ -121,20 +128,49 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   // Audit Log State
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
 
-  const loadAuditLog = useCallback((activeSession: AdminSession | null) => {
+  const loadAuditLog = useCallback(async (activeSession: AdminSession | null) => {
     if (!activeSession) {
       setAuditEntries([]);
       return;
     }
     try {
+      // Show cached entries immediately while pulling full history from Firestore
       setAuditEntries(adminGetAuditLog(activeSession));
+      const remoteEntries = await fetchAuditLog(activeSession);
+      setAuditEntries(remoteEntries);
     } catch {
       setAuditEntries([]);
     }
   }, []);
 
+  // On mount: ask Firestore whether an admin exists, fetch server-side lockout state,
+  // and wait for Firebase Auth to restore before checking for an active session.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [isConfiguredRemote] = await Promise.all([
+          fetchAdminConfigured(),
+          waitForFirebaseAuthReady(),
+          fetchLockoutState(),
+        ]);
+        if (cancelled) return;
+        setConfigured(isConfiguredRemote);
+        const restored = isConfiguredRemote ? getActiveAdminSession(Date.now()) : null;
+        setSession(restored);
+        setNowMs(Date.now());
+      } finally {
+        if (!cancelled) setAuthChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 1-second clock for lockout countdown & 15-minute inactivity enforcement
   useEffect(() => {
+    if (authChecking) return;
     const id = window.setInterval(() => {
       const current = Date.now();
       setNowMs(current);
@@ -149,22 +185,25 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [session]);
+  }, [authChecking, session]);
 
   // Cross-tab sessionEpoch invalidation ("Log out all sessions")
   useEffect(() => {
+    if (authChecking) return;
     const handleStorage = () => {
-      setConfigured(isAdminConfigured());
-      const active = getActiveAdminSession();
-      if (!active && session) {
-        setSession(null);
-        setAuditEntries([]);
-        setAuthNotice('Session ended because all sessions were logged out.');
-      }
+      void fetchAdminConfigured().then((isConfiguredRemote) => {
+        setConfigured(isConfiguredRemote);
+        const active = getActiveAdminSession();
+        if (!active && session) {
+          setSession(null);
+          setAuditEntries([]);
+          setAuthNotice('Session ended because all sessions were logged out.');
+        }
+      });
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [session]);
+  }, [authChecking, session]);
 
   // Track user activity to extend 15-minute inactivity window while logged in
   useEffect(() => {
@@ -192,8 +231,9 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     };
   }, [session]);
 
+  // Refresh audit log from Firestore whenever authenticated session or data changes
   useEffect(() => {
-    loadAuditLog(session);
+    void loadAuditLog(session);
   }, [session, matches, channels, activeTab, loadAuditLog]);
 
   const lockout = getLockoutState(nowMs);
@@ -225,6 +265,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       const res = await setupFirstAdmin(emailInput, passwordInput, confirmPasswordInput);
       if (!res.ok) {
         setAuthError(res.error);
+        const isConfiguredRemote = await fetchAdminConfigured();
+        setConfigured(isConfiguredRemote);
         return;
       }
       setConfigured(true);
@@ -232,7 +274,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setEmailInput('');
       setPasswordInput('');
       setConfirmPasswordInput('');
-      setFeedback({ type: 'success', text: 'Admin account created and signed in.' });
+      setFeedback({ type: 'success', text: 'Admin account created in Firebase Auth and signed in.' });
+      void refreshPublicDataFromFirestore();
     } finally {
       setAuthSubmitting(false);
     }
@@ -248,6 +291,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       if (!res.ok) {
         setAuthError(res.error);
         setPasswordInput('');
+        await fetchLockoutState();
         setNowMs(Date.now());
         return;
       }
@@ -255,6 +299,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setEmailInput('');
       setPasswordInput('');
       setFeedback(null);
+      void refreshPublicDataFromFirestore();
     } finally {
       setAuthSubmitting(false);
     }
@@ -295,8 +340,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         ? adminUpdateMatch(session, editingMatchId, matchForm)
         : adminCreateMatch(session, matchForm);
 
-      if (!res.ok) {
-        setFeedback({ type: 'error', text: res.error });
+      if (!res.ok || !res.match) {
+        setFeedback({ type: 'error', text: res.error || 'Unable to save match.' });
         return;
       }
 
@@ -309,7 +354,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setEditingMatchId(null);
       setMatchForm(createEmptyMatchForm());
       onRefreshData();
-      loadAuditLog(getActiveAdminSession());
+      void loadAuditLog(getActiveAdminSession());
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -341,7 +386,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     try {
       const res = adminDeleteMatch(session, matchId);
       if (!res.ok) {
-        setFeedback({ type: 'error', text: res.error });
+        setFeedback({ type: 'error', text: res.error || 'Unable to delete match.' });
         return;
       }
       if (editingMatchId === matchId) {
@@ -351,7 +396,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setConfirmDeleteMatchId(null);
       setFeedback({ type: 'success', text: 'Match deleted.' });
       onRefreshData();
-      loadAuditLog(getActiveAdminSession());
+      void loadAuditLog(getActiveAdminSession());
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -381,8 +426,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         ? adminUpdateChannel(session, editingChannelId, channelForm)
         : adminCreateChannel(session, channelForm);
 
-      if (!res.ok) {
-        setFeedback({ type: 'error', text: res.error });
+      if (!res.ok || !res.channel) {
+        setFeedback({ type: 'error', text: res.error || 'Unable to save channel.' });
         return;
       }
 
@@ -395,7 +440,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setEditingChannelId(null);
       setChannelForm(EMPTY_CHANNEL_FORM);
       onRefreshData();
-      loadAuditLog(getActiveAdminSession());
+      void loadAuditLog(getActiveAdminSession());
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -420,7 +465,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     try {
       const res = adminDeleteChannel(session, channelId);
       if (!res.ok) {
-        setFeedback({ type: 'error', text: res.error });
+        setFeedback({ type: 'error', text: res.error || 'Unable to delete channel.' });
         return;
       }
       if (editingChannelId === channelId) {
@@ -430,7 +475,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setConfirmDeleteChannelId(null);
       setFeedback({ type: 'success', text: 'Channel deleted.' });
       onRefreshData();
-      loadAuditLog(getActiveAdminSession());
+      void loadAuditLog(getActiveAdminSession());
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -459,9 +504,9 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setConfirmNewPw('');
       setFeedback({
         type: 'success',
-        text: 'Password updated with SHA-256 hash. Previous sessions invalidated.',
+        text: 'Password updated in Firebase Auth. Previous sessions invalidated.',
       });
-      loadAuditLog(res.session);
+      void loadAuditLog(res.session);
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -471,6 +516,44 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setPwSubmitting(false);
     }
   };
+
+  // ============================================================================
+  // INITIAL LOADING STATE: WAITING FOR FIRESTORE & FIREBASE AUTH
+  // ============================================================================
+
+  if (authChecking) {
+    return (
+      <div className="min-h-dvh bg-[#F5F7F9] text-slate-900 flex flex-col justify-between px-4 py-10">
+        <div className="max-w-md w-full mx-auto my-auto">
+          <div className="mb-6 flex items-center justify-between">
+            <span className="font-display text-2xl font-extrabold tracking-wide text-emerald-800">
+              Cricket Live Admin
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-900 min-h-[40px] px-2 transition-colors"
+            >
+              Public Schedule
+            </button>
+          </div>
+          <section className="rounded-2xl bg-white border border-slate-200 shadow-xs p-8 text-center">
+            <Shield className="w-7 h-7 text-emerald-700 mx-auto" aria-hidden="true" />
+            <h1 className="font-display text-2xl font-bold text-slate-900 mt-3">
+              Checking Administrator Account
+            </h1>
+            <p className="text-xs text-slate-600 mt-1.5">
+              Verifying server-side account status in Firebase Firestore...
+            </p>
+          </section>
+        </div>
+
+        <footer className="max-w-md w-full mx-auto pt-8 text-center text-xs text-slate-500">
+          Storage: <span className="text-slate-800 font-semibold">Firebase Firestore (server-side)</span> · Clearing browser data does not remove the admin account.
+        </footer>
+      </div>
+    );
+  }
 
   // ============================================================================
   // UNAUTHENTICATED VIEW: SINGLE-ADMIN SETUP OR HARDENED LOGIN
@@ -504,7 +587,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 </h1>
                 <p className="text-xs text-slate-600 mt-0.5">
                   {configured
-                    ? 'Protected by SHA-256 hashing & brute-force lockout'
+                    ? 'Protected by Firebase Auth (server-side password hashing) & brute-force lockout'
                     : 'Set up the authorized single administrator password'}
                 </p>
               </div>
@@ -682,7 +765,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         </div>
 
         <footer className="max-w-md w-full mx-auto pt-8 text-center text-xs text-slate-500">
-          Storage: <span className="text-slate-800 font-semibold">localStorage</span> (Firebase Firestore unavailable)
+          Storage: <span className="text-slate-800 font-semibold">Firebase Firestore (server-side)</span> · Clearing browser data does not remove the admin account.
         </footer>
       </div>
     );
@@ -744,9 +827,11 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         {/* Storage & Security Status Line — Shown ONLY inside Admin Panel */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-5 border-b border-slate-200 text-xs text-slate-600">
           <div>
-            Storage: <span className="text-slate-900 font-bold">localStorage</span> (Firebase Firestore unavailable)
+            Storage: <span className="text-slate-900 font-bold">Firebase Firestore (server-side)</span>
             <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
-            <span>Public read-only · Single-admin authenticated write</span>
+            <span>Clearing browser data does not remove the admin account</span>
+            <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
+            <span>Public read-only / Admin authenticated write</span>
           </div>
           <div className="font-mono-tabular font-semibold text-slate-800 sm:hidden">
             {session.email} · Auto-logout in {formatMmSs(remainingSessionMs)}
@@ -926,7 +1011,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label htmlFor="match-label" className="block text-xs font-semibold text-slate-700 mb-1">
-                      Match Label
+                      Match Label *
                     </label>
                     <input
                       id="match-label"
@@ -934,7 +1019,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                       maxLength={40}
                       value={matchForm.matchNumber}
                       onChange={(e) => setMatchForm((f) => ({ ...f, matchNumber: e.target.value }))}
-                      placeholder="e.g. Match 9 (optional)"
+                      placeholder="e.g. Match 9"
                       className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                     />
                   </div>
@@ -1315,7 +1400,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         )}
 
         {/* ================================================================ */}
-        {/* AUDIT LOG TAB (Admin-only visibility) */}
+        {/* AUDIT LOG TAB (Admin-only visibility, synced with Firestore) */}
         {/* ================================================================ */}
         {activeTab === 'audit' && (
           <section className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
@@ -1325,7 +1410,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   Admin Audit Log
                 </h2>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  Records every authenticated admin action. Visible strictly inside the Admin Panel.
+                  Records every authenticated admin action in Firebase Firestore. Visible strictly inside the Admin Panel.
                 </p>
               </div>
               <span className="text-xs font-semibold font-mono-tabular text-slate-500">
@@ -1383,7 +1468,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 Change Password
               </h2>
               <p className="text-xs text-slate-600 mt-1">
-                Changing your password rotates the SHA-256 salt and invalidates all other sessions.
+                Changing your password updates Firebase Auth (server-side password hashing) and invalidates all other sessions.
               </p>
 
               <form onSubmit={handlePasswordChange} noValidate className="mt-5 space-y-4">
@@ -1473,7 +1558,11 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-600">Password Storage</dt>
-                  <dd className="text-emerald-700 font-semibold">Salted PBKDF2-SHA-256</dd>
+                  <dd className="text-emerald-700 font-semibold">Firebase Auth (server-side password hashing)</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-slate-600">Admin Account Persistence</dt>
+                  <dd className="text-slate-900 font-medium">Firebase Firestore (server-side)</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-600">Brute-Force Lockout</dt>
