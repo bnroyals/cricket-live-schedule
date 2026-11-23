@@ -1,42 +1,51 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PublicLayout } from './components/PublicLayout';
 import { HomePage } from './pages/HomePage';
 import { MatchPage } from './pages/MatchPage';
 import { ChannelsPage } from './pages/ChannelsPage';
+import { WatchPlayerPage } from './pages/WatchPlayerPage';
 import { AdminPage } from './pages/AdminPage';
 import { usePathname } from './lib/router';
 import { SECRET_ADMIN_PATH } from './lib/firebase';
 import {
-  ensureSeedData,
-  getPublicChannels,
-  getPublicMatchBySlug,
-  getPublicMatches,
   purgeExpiredMatches,
-  refreshPublicDataFromFirestore,
+  subscribeToLiveChannels,
+  subscribeToLiveMatches,
 } from './lib/storage';
+import { isMatchExpired } from './lib/time';
 import type { Channel, CricketMatch } from './types/cricket';
 
 export default function App() {
   const pathname = usePathname();
 
-  // Load the single source of truth for every page.
-  const [matches, setMatches] = useState<CricketMatch[]>(() => {
-    ensureSeedData();
-    purgeExpiredMatches();
-    return getPublicMatches();
-  });
-  const [channels, setChannels] = useState<Channel[]>(() => {
-    ensureSeedData();
-    return getPublicChannels();
-  });
+  // Live Firestore collections (zero hardcoded or localStorage fallback content).
+  const [rawMatches, setRawMatches] = useState<CricketMatch[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState<boolean>(true);
+  const [channelsLoading, setChannelsLoading] = useState<boolean>(true);
 
-  // 1-second clock tick for smooth live match countdowns.
+  // 1-second clock tick for smooth live match countdowns and expiry checks.
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
+  // Subscribe LIVE to Firestore matches & channels so Admin Panel edits appear immediately.
+  useEffect(() => {
+    const unsubMatches = subscribeToLiveMatches(
+      (nextMatches) => setRawMatches(nextMatches),
+      () => setMatchesLoading(false)
+    );
+    const unsubChannels = subscribeToLiveChannels(
+      (nextChannels) => setChannels(nextChannels),
+      () => setChannelsLoading(false)
+    );
+    return () => {
+      unsubMatches();
+      unsubChannels();
+    };
+  }, []);
+
   const refreshAll = useCallback(() => {
-    purgeExpiredMatches(Date.now());
-    setMatches(getPublicMatches());
-    setChannels(getPublicChannels());
+    setNowMs(Date.now());
+    void purgeExpiredMatches(Date.now());
   }, []);
 
   // Check expiry on mount, route navigation, and every 15 seconds.
@@ -44,36 +53,24 @@ export default function App() {
     refreshAll();
   }, [pathname, refreshAll]);
 
-  // Pull the server-side public data (Firestore) into the local cache once
-  // on load, so every browser and device sees the same schedule. Falls back
-  // to the local cache when Firestore is unreachable.
   useEffect(() => {
-    void refreshPublicDataFromFirestore();
-  }, []);
-
-  useEffect(() => {
-    // 15-second check to remove finished matches.
     const expiryTimer = window.setInterval(() => {
-      purgeExpiredMatches(Date.now());
-      setMatches(getPublicMatches());
-      setChannels(getPublicChannels());
+      void purgeExpiredMatches(Date.now());
     }, 15000);
-    // 1-second clock tick for smooth live match countdowns
     const clockTimer = window.setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
-    const handleSync = () => {
-      refreshAll();
-    };
-    window.addEventListener('clsw:data-changed', handleSync);
-    window.addEventListener('storage', handleSync);
     return () => {
       window.clearInterval(expiryTimer);
       window.clearInterval(clockTimer);
-      window.removeEventListener('clsw:data-changed', handleSync);
-      window.removeEventListener('storage', handleSync);
     };
-  }, [refreshAll]);
+  }, []);
+
+  // Filter out expired matches (30 min after end time) in real time.
+  const activeMatches = useMemo(
+    () => rawMatches.filter((m) => !isMatchExpired(m, nowMs)),
+    [rawMatches, nowMs]
+  );
 
   // Normalize path (strip trailing slash except root)
   const normalizedPath =
@@ -84,20 +81,42 @@ export default function App() {
   if (normalizedPath === SECRET_ADMIN_PATH) {
     return (
       <AdminPage
-        matches={matches}
+        matches={activeMatches}
         channels={channels}
         onRefreshData={refreshAll}
       />
     );
   }
 
+  // In-App Live Embedded Player Page (/watch/<channelId>)
+  if (normalizedPath.startsWith('/watch/')) {
+    const channelId = decodeURIComponent(normalizedPath.slice('/watch/'.length));
+    return (
+      <PublicLayout pathname="/channels">
+        <WatchPlayerPage
+          channelId={channelId}
+          channels={channels}
+          loading={channelsLoading}
+        />
+      </PublicLayout>
+    );
+  }
+
   // Match Page (/match/<slug>)
   if (normalizedPath.startsWith('/match/')) {
     const slug = decodeURIComponent(normalizedPath.slice('/match/'.length));
-    const match = getPublicMatchBySlug(slug);
+    const normalizedSlug = slug.trim().toLowerCase();
+    const match =
+      activeMatches.find((m) => m.slug.toLowerCase() === normalizedSlug) ?? null;
     return (
       <PublicLayout pathname={normalizedPath}>
-        <MatchPage slug={slug} match={match} channels={channels} nowMs={nowMs} />
+        <MatchPage
+          slug={slug}
+          match={match}
+          channels={channels}
+          nowMs={nowMs}
+          loading={matchesLoading}
+        />
       </PublicLayout>
     );
   }
@@ -106,7 +125,7 @@ export default function App() {
   if (normalizedPath === '/channels') {
     return (
       <PublicLayout pathname={normalizedPath}>
-        <ChannelsPage channels={channels} />
+        <ChannelsPage channels={channels} loading={channelsLoading} />
       </PublicLayout>
     );
   }
@@ -114,7 +133,7 @@ export default function App() {
   // Home Page (/) and fallback
   return (
     <PublicLayout pathname="/">
-      <HomePage matches={matches} channels={channels} nowMs={nowMs} />
+      <HomePage matches={activeMatches} channels={channels} nowMs={nowMs} />
     </PublicLayout>
   );
 }

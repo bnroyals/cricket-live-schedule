@@ -13,6 +13,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   setDoc,
   writeBatch,
 } from 'firebase/firestore';
@@ -37,28 +38,21 @@ import {
 import { isMatchExpired } from './time';
 
 /**
- * Admin auth + data storage.
+ * Live Firebase Firestore storage + hardened single-admin Firebase Auth.
  *
- * The single authorized admin account is pre-created in Firebase Auth
- * (outside this app); the live app is login-only and never creates an admin
- * account. Matches, channels, audit logs, and session epoch metadata live in
- * Firebase Auth + Firestore (server-side), NOT in browser localStorage.
- * localStorage is used only as a local cache for public content and for
- * lockout counters; the admin session lives in sessionStorage with a
- * 15-minute inactivity timeout. Clearing browser data therefore never
- * affects the admin account or brings back any setup screen.
- *
- * Firestore rules (see firestore.rules, also published in the console):
- * public read-only for matches/channels, write only for the authenticated
- * admin biswajitcopy3@gmail.com. security/lockout holds failed-login counters.
+ * All matches, channels, audit logs, and session epoch metadata live in
+ * Firebase Firestore (server-side) and are controlled exclusively from the
+ * Admin Panel. Public pages subscribe LIVE to Firestore via onSnapshot so
+ * every admin add/edit/delete takes effect immediately with zero rebuilds
+ * and zero hardcoded content in code.
  */
 
 const KEYS = {
-  MATCHES: 'clsw_matches_v1',
-  CHANNELS: 'clsw_channels_v1',
-  EXPIRED_SLUGS: 'clsw_expired_slugs_v1',
-  SEEDED: 'clsw_seeded_v1',
-  ADMIN_AUTH: 'clsw_admin_auth_v1',
+  LEGACY_MATCHES: 'clsw_matches_v1',
+  LEGACY_CHANNELS: 'clsw_channels_v1',
+  LEGACY_EXPIRED_SLUGS: 'clsw_expired_slugs_v1',
+  LEGACY_SEEDED: 'clsw_seeded_v1',
+  LEGACY_ADMIN_AUTH: 'clsw_admin_auth_v1',
   ADMIN_LOCKOUT: 'clsw_admin_lockout_v1',
   AUDIT_LOG: 'clsw_audit_log_v1',
 } as const;
@@ -69,60 +63,6 @@ export const AUTHORIZED_ADMIN_EMAIL = 'biswajitcopy3@gmail.com';
 export const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 export const MAX_FAILED_ATTEMPTS = 5;
-
-const SEED_CHANNELS: Channel[] = [
-  { id: 'sony-sports-ten-one', name: 'Sony Sports Ten 1', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ten1', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'sony-sports-ten-three', name: 'Sony Sports Ten 3', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ten3', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'willow-cricket', name: 'Willow Cricket', language: 'English', streamUrl: 'https://pijirege.st/event/willow-m', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'ptv-sports', name: 'PTV Sports', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ptvsp', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'willow-hd', name: 'Willow HD', language: 'English', streamUrl: 'https://playsza.st/player.php?id=willowhd', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'channel-hd', name: 'Channel HD', language: 'English', streamUrl: 'https://playsza.st/player.php?id=willow', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-];
-
-const SEED_STREAM_URLS_BY_NAME = new Map<string, string>(
-  SEED_CHANNELS.map((c) => [c.name.trim().toLowerCase(), c.streamUrl])
-);
-
-function backfillSeedChannelStreamUrls(channels: Channel[]): { channels: Channel[]; backfilled: Channel[] } {
-  const backfilled: Channel[] = [];
-  const nowIso = new Date().toISOString();
-  const updated = channels.map((channel) => {
-    if (channel.streamUrl && channel.streamUrl.trim().length > 0) {
-      return channel;
-    }
-    const seedUrl = SEED_STREAM_URLS_BY_NAME.get(channel.name.trim().toLowerCase());
-    if (!seedUrl) {
-      return channel;
-    }
-    const nextChannel: Channel = {
-      ...channel,
-      streamUrl: seedUrl,
-      updatedAt: nowIso,
-    };
-    backfilled.push(nextChannel);
-    return nextChannel;
-  });
-  return { channels: updated, backfilled };
-}
-
-const SEED_MATCHES: CricketMatch[] = [
-  {
-    id: 'seed-ind-a-vs-pak-a',
-    slug: 'india-a-vs-pakistan-a',
-    teamA: 'India A',
-    teamB: 'Pakistan A',
-    tournament: "ACC Men's Asia Cup Rising Stars 2026",
-    matchNumber: 'Match 8',
-    venue: 'West End Park International Cricket Stadium Doha',
-    date: '2026-11-22',
-    startTime: '15:30',
-    endTime: '19:30',
-    status: 'Upcoming',
-    channelIds: ['sony-sports-ten-three', 'willow-cricket'],
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  },
-];
 
 function safeReadJson<T>(key: string, fallback: T): T {
   try {
@@ -142,15 +82,22 @@ function safeWriteJson<T>(key: string, value: T): void {
   }
 }
 
-function notifyDataChanged(): void {
+function cleanupLegacyLocalStorage(): void {
   try {
-    window.dispatchEvent(new CustomEvent('clsw:data-changed'));
+    window.localStorage.removeItem(KEYS.LEGACY_ADMIN_AUTH);
+    window.localStorage.removeItem(KEYS.LEGACY_MATCHES);
+    window.localStorage.removeItem(KEYS.LEGACY_CHANNELS);
+    window.localStorage.removeItem(KEYS.LEGACY_EXPIRED_SLUGS);
+    window.localStorage.removeItem(KEYS.LEGACY_SEEDED);
   } catch {
-    // Ignore event errors.
+    // Ignore storage cleanup errors.
   }
 }
 
-// ---------- Firebase helpers ----------
+// ---------- In-memory live Firestore mirror ----------
+
+let liveMatches: CricketMatch[] = [];
+let liveChannels: Channel[] = [];
 
 type AdminConfigDoc = {
   email: string;
@@ -167,6 +114,7 @@ let adminConfigFetchPromise: Promise<boolean> | null = null;
 let firestoreLockoutCache: LockoutState | null = null;
 let authReady = false;
 let authReadyPromise: Promise<User | null> | null = null;
+let oneTimeSeedAttempted = false;
 
 function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => stripUndefined(item)) as T;
@@ -178,6 +126,39 @@ function stripUndefined<T>(value: T): T {
     return out as T;
   }
   return value;
+}
+
+function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
+  return raw
+    .map((match) => ({
+      ...match,
+      channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
+    }))
+    .sort((a, b) => {
+      const aKey = `${a.date}T${a.startTime}`;
+      const bKey = `${b.date}T${b.startTime}`;
+      return aKey.localeCompare(bKey);
+    });
+}
+
+function normalizeChannels(raw: Channel[]): Channel[] {
+  const unique = new Map<string, Channel>();
+  raw.forEach((channel) => {
+    if (channel && channel.id && !unique.has(channel.id)) {
+      unique.set(channel.id, {
+        ...channel,
+        name: typeof channel.name === 'string' ? channel.name : '',
+        language: typeof channel.language === 'string' ? channel.language : '',
+        streamUrl: typeof channel.streamUrl === 'string' ? channel.streamUrl : '',
+      });
+    }
+  });
+  return Array.from(unique.values()).sort((a, b) => {
+    const aTime = a.createdAt || '';
+    const bTime = b.createdAt || '';
+    if (aTime !== bTime) return aTime.localeCompare(bTime);
+    return a.name.localeCompare(b.name);
+  });
 }
 
 /** Resolves once Firebase Auth has restored (or found no) signed-in user. */
@@ -240,59 +221,17 @@ async function ensureAdminConfigDoc(uid: string): Promise<void> {
     const snap = await getDoc(ref);
     if (!snap.exists()) {
       const nowIso = new Date().toISOString();
-      await setDoc(ref, { email: AUTHORIZED_ADMIN_EMAIL, uid, sessionEpoch: 1, createdAt: nowIso, updatedAt: nowIso });
+      await setDoc(ref, {
+        email: AUTHORIZED_ADMIN_EMAIL,
+        uid,
+        sessionEpoch: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
     }
     await fetchAdminConfigured();
   } catch {
     // The sign-in itself already succeeded; the config doc heals on next login.
-  }
-}
-
-async function persistMatchToFirestore(match: CricketMatch): Promise<void> {
-  try {
-    if (!getFirebaseAuth().currentUser) return;
-    await setDoc(doc(getFirestoreDb(), 'matches', match.id), stripUndefined(match));
-  } catch {
-    // Best-effort; the local cache already holds the change.
-  }
-}
-
-async function persistMatchesToFirestore(matches: CricketMatch[]): Promise<void> {
-  try {
-    if (!getFirebaseAuth().currentUser) return;
-    const db = getFirestoreDb();
-    const batch = writeBatch(db);
-    matches.forEach((m) => batch.set(doc(db, 'matches', m.id), stripUndefined(m)));
-    await batch.commit();
-  } catch {
-    // Best-effort.
-  }
-}
-
-async function deleteMatchFromFirestore(id: string): Promise<void> {
-  try {
-    if (!getFirebaseAuth().currentUser) return;
-    await deleteDoc(doc(getFirestoreDb(), 'matches', id));
-  } catch {
-    // Best-effort.
-  }
-}
-
-async function persistChannelToFirestore(channel: Channel): Promise<void> {
-  try {
-    if (!getFirebaseAuth().currentUser) return;
-    await setDoc(doc(getFirestoreDb(), 'channels', channel.id), stripUndefined(channel));
-  } catch {
-    // Best-effort.
-  }
-}
-
-async function deleteChannelFromFirestore(id: string): Promise<void> {
-  try {
-    if (!getFirebaseAuth().currentUser) return;
-    await deleteDoc(doc(getFirestoreDb(), 'channels', id));
-  } catch {
-    // Best-effort.
   }
 }
 
@@ -307,9 +246,17 @@ async function persistAuditEntry(entry: AuditLogEntry): Promise<void> {
 
 async function mirrorLockoutToFirestore(state: LockoutState): Promise<void> {
   try {
-    await setDoc(doc(getFirestoreDb(), 'security', 'lockout'), { failedAttempts: state.failedAttempts, lockedUntil: state.lockedUntil, lastFailedAt: Date.now() }, { merge: true });
+    await setDoc(
+      doc(getFirestoreDb(), 'security', 'lockout'),
+      {
+        failedAttempts: state.failedAttempts,
+        lockedUntil: state.lockedUntil,
+        lastFailedAt: Date.now(),
+      },
+      { merge: true }
+    );
   } catch {
-    // Best-effort; the local lockout still applies in this browser.
+    // Best-effort; local lockout still applies in this browser.
   }
 }
 
@@ -321,7 +268,11 @@ async function clearFirestoreLockout(): Promise<void> {
   }
 }
 
-export async function fetchLockoutState(): Promise<{ isLocked: boolean; remainingMs: number; failedAttempts: number }> {
+export async function fetchLockoutState(): Promise<{
+  isLocked: boolean;
+  remainingMs: number;
+  failedAttempts: number;
+}> {
   try {
     const snap = await getDoc(doc(getFirestoreDb(), 'security', 'lockout'));
     if (snap.exists()) {
@@ -332,167 +283,186 @@ export async function fetchLockoutState(): Promise<{ isLocked: boolean; remainin
       };
     }
   } catch {
-    // Keep the local lockout state.
+    // Keep local lockout state.
   }
   return getLockoutState(Date.now());
 }
 
 /**
- * Pull the server-side public data (Firestore) into the local cache and
- * notify the app to refresh. Firestore is empty on first run: the signed-in
- * admin's local seed data is published there once so every browser and
- * device sees the same schedule.
+ * Subscribe LIVE to the Firestore matches collection.
+ * Home Page, Match Page, and Admin Panel all read strictly from Firestore.
+ */
+export function subscribeToLiveMatches(
+  onUpdate: (matches: CricketMatch[]) => void,
+  onReady?: () => void
+): () => void {
+  cleanupLegacyLocalStorage();
+  const db = getFirestoreDb();
+  let notifiedReady = false;
+  return onSnapshot(
+    collection(db, 'matches'),
+    (snap) => {
+      const next = normalizeMatches(snap.docs.map((d) => d.data() as CricketMatch));
+      liveMatches = next;
+      onUpdate(next);
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    },
+    () => {
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    }
+  );
+}
+
+/**
+ * Subscribe LIVE to the Firestore channels collection.
+ * Channels Page, Live Player Page, Match Page, and Admin Panel all read strictly from Firestore.
+ */
+export function subscribeToLiveChannels(
+  onUpdate: (channels: Channel[]) => void,
+  onReady?: () => void
+): () => void {
+  cleanupLegacyLocalStorage();
+  const db = getFirestoreDb();
+  let notifiedReady = false;
+  return onSnapshot(
+    collection(db, 'channels'),
+    (snap) => {
+      const next = normalizeChannels(snap.docs.map((d) => d.data() as Channel));
+      liveChannels = next;
+      onUpdate(next);
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    },
+    () => {
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    }
+  );
+}
+
+/**
+ * One-time Firestore seed for initial channels ONLY when the Firestore channels
+ * collection is completely empty and the authorized admin is signed in.
+ * Never seeds matches and NEVER overwrites or modifies existing Firestore documents.
+ */
+export async function ensureSeedData(): Promise<void> {
+  cleanupLegacyLocalStorage();
+  if (oneTimeSeedAttempted) return;
+  const user = getFirebaseAuth().currentUser;
+  if (!user || user.email?.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
+    return;
+  }
+  oneTimeSeedAttempted = true;
+  try {
+    const db = getFirestoreDb();
+    const channelSnap = await getDocs(collection(db, 'channels'));
+    if (!channelSnap.empty) {
+      // Channels already exist in Firestore — never overwrite admin-managed data.
+      return;
+    }
+    const { default: initialChannels } = await import('../data/initial-channels.json');
+    const nowIso = new Date().toISOString();
+    const batch = writeBatch(db);
+    initialChannels.forEach((item, index) => {
+      const createdAt = new Date(Date.parse(nowIso) + index).toISOString();
+      const channel: Channel = {
+        id: item.id,
+        name: item.name,
+        language: item.language,
+        streamUrl: item.streamUrl,
+        createdAt,
+        updatedAt: nowIso,
+      };
+      batch.set(doc(db, 'channels', channel.id), stripUndefined(channel));
+    });
+    await batch.commit();
+  } catch {
+    oneTimeSeedAttempted = false;
+  }
+}
+
+/**
+ * Force-refresh matches and channels from Firestore (useful after admin login).
+ * Also runs the one-time empty-collection channel seed if channels is empty.
  */
 export async function refreshPublicDataFromFirestore(): Promise<void> {
+  cleanupLegacyLocalStorage();
+  await ensureSeedData();
   try {
     const db = getFirestoreDb();
     const [matchSnap, channelSnap] = await Promise.all([
       getDocs(collection(db, 'matches')),
       getDocs(collection(db, 'channels')),
     ]);
-    let changed = false;
-    if (!matchSnap.empty) {
-      const matches = matchSnap.docs.map((d) => d.data() as CricketMatch);
-      safeWriteJson(KEYS.MATCHES, matches);
-      changed = true;
-    } else if (getFirebaseAuth().currentUser) {
-      await persistMatchesToFirestore(getPublicMatches());
-    }
-    if (!channelSnap.empty) {
-      const rawChannels = channelSnap.docs.map((d) => d.data() as Channel);
-      const { channels, backfilled } = backfillSeedChannelStreamUrls(rawChannels);
-      safeWriteJson(KEYS.CHANNELS, channels);
-      changed = true;
-      if (backfilled.length > 0 && getFirebaseAuth().currentUser) {
-        try {
-          const batch = writeBatch(db);
-          backfilled.forEach((c) => batch.set(doc(db, 'channels', c.id), stripUndefined(c)));
-          await batch.commit();
-        } catch {
-          // Best-effort Firestore backfill; local cache already holds the backfilled stream URLs.
-        }
-      }
-    } else if (getFirebaseAuth().currentUser) {
-      const db2 = getFirestoreDb();
-      const batch = writeBatch(db2);
-      getPublicChannels().forEach((c) => batch.set(doc(db2, 'channels', c.id), stripUndefined(c)));
+    liveMatches = normalizeMatches(matchSnap.docs.map((d) => d.data() as CricketMatch));
+    liveChannels = normalizeChannels(channelSnap.docs.map((d) => d.data() as Channel));
+  } catch {
+    // Live onSnapshot listeners remain authoritative when connected.
+  }
+}
+
+/**
+ * Delete expired matches (30+ minutes past end time) from Firestore when the
+ * authorized admin is signed in. Public views also filter expired matches live.
+ */
+export async function purgeExpiredMatches(
+  nowMs: number = Date.now()
+): Promise<{ removedCount: number }> {
+  const expired = liveMatches.filter((match) => isMatchExpired(match, nowMs));
+  if (expired.length === 0) return { removedCount: 0 };
+
+  const user = getFirebaseAuth().currentUser;
+  if (user && user.email?.toLowerCase() === AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
+    try {
+      const db = getFirestoreDb();
+      const batch = writeBatch(db);
+      expired.forEach((match) => batch.delete(doc(db, 'matches', match.id)));
       await batch.commit();
+    } catch {
+      // Will retry on next check.
     }
-    if (changed) notifyDataChanged();
-  } catch {
-    // Keep the local cache when Firestore is unreachable.
   }
-}
-
-function enforceSingleAdminAndEnglishData(): void {
-  try {
-    // Any local admin record is legacy: the admin now lives in Firebase
-    // Auth + Firestore, and a local record must never be trusted again.
-    if (window.localStorage.getItem(KEYS.ADMIN_AUTH)) {
-      window.localStorage.removeItem(KEYS.ADMIN_AUTH);
-    }
-    const matches = safeReadJson<CricketMatch[]>(KEYS.MATCHES, []);
-    const hindiChannels = new Set(['sony-sports-ten-three', 'willow-cricket']);
-    let changed = false;
-    const cleanedMatches = matches.map((match) => {
-      const channelIds = (match.channelIds || []).filter((id) => !hindiChannels.has(id));
-      if (channelIds.length !== (match.channelIds || []).length) {
-        changed = true;
-        return { ...match, channelIds };
-      }
-      return match;
-    });
-    if (changed) safeWriteJson(KEYS.MATCHES, cleanedMatches);
-  } catch {
-    // Never block the app for cleanup failures.
-  }
-}
-
-export function ensureSeedData(): void {
-  try {
-    if (window.localStorage.getItem(KEYS.SEEDED)) {
-      const existingChannels = safeReadJson<Channel[]>(KEYS.CHANNELS, []);
-      const { channels: updatedChannels, backfilled } = backfillSeedChannelStreamUrls(existingChannels);
-      if (backfilled.length > 0) {
-        safeWriteJson(KEYS.CHANNELS, updatedChannels);
-      }
-      return;
-    }
-    const expiredSlugs = new Set(safeReadJson<string[]>(KEYS.EXPIRED_SLUGS, []));
-    const matches = SEED_MATCHES.filter((match) => !expiredSlugs.has(match.id));
-    safeWriteJson(KEYS.MATCHES, matches);
-    safeWriteJson(KEYS.CHANNELS, SEED_CHANNELS);
-    window.localStorage.setItem(KEYS.SEEDED, '1');
-  } catch {
-    // Ignore seed failures; public pages render an empty schedule instead.
-  }
-}
-
-export function purgeExpiredMatches(nowMs: number = Date.now()): { removedCount: number } {
-  try {
-    ensureSeedData();
-    const matches = safeReadJson<CricketMatch[]>(KEYS.MATCHES, []);
-    const expired = matches.filter((match) => isMatchExpired(match, nowMs));
-    if (expired.length === 0) return { removedCount: 0 };
-    const expiredIds = new Set(expired.map((match) => match.id));
-    const expiredSlugs = new Set(safeReadJson<string[]>(KEYS.EXPIRED_SLUGS, []));
-    expired.forEach((match) => expiredSlugs.add(match.slug));
-    safeWriteJson(KEYS.EXPIRED_SLUGS, Array.from(expiredSlugs));
-    const remaining = matches.filter((match) => !expiredIds.has(match.id));
-    safeWriteJson(KEYS.MATCHES, remaining);
-    expired.forEach((match) => void deleteMatchFromFirestore(match.id));
-    return { removedCount: expired.length };
-  } catch {
-    return { removedCount: 0 };
-  }
+  return { removedCount: expired.length };
 }
 
 export function getPublicMatches(): CricketMatch[] {
-  try {
-    enforceSingleAdminAndEnglishData();
-    ensureSeedData();
-    const matches = safeReadJson<CricketMatch[]>(KEYS.MATCHES, []);
-    const cleaned = matches.map((match) => ({
-      ...match,
-      channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
-    }));
-    return cleaned.sort((a, b) => {
-      const aKey = `${a.date}T${a.startTime}`;
-      const bKey = `${b.date}T${b.startTime}`;
-      return aKey.localeCompare(bKey);
-    });
-  } catch {
-    return [];
-  }
+  return liveMatches;
 }
 
 export function getPublicMatchBySlug(slug: string): CricketMatch | null {
   const normalized = slug.trim().toLowerCase();
-  return getPublicMatches().find((match) => match.slug.toLowerCase() === normalized) ?? null;
+  return liveMatches.find((match) => match.slug.toLowerCase() === normalized) ?? null;
 }
 
 export function getPublicChannels(): Channel[] {
-  try {
-    ensureSeedData();
-    const channels = safeReadJson<Channel[]>(KEYS.CHANNELS, []);
-    const unique = new Map<string, Channel>();
-    channels.forEach((channel) => {
-      if (!unique.has(channel.id)) unique.set(channel.id, channel);
-    });
-    return Array.from(unique.values());
-  } catch {
-    return [];
-  }
+  return liveChannels;
 }
 
 /** Sync check of the last known Firestore admin state. Never reads localStorage. */
 export function isAdminConfigured(): boolean {
-  enforceSingleAdminAndEnglishData();
+  cleanupLegacyLocalStorage();
   return adminConfiguredCache === true;
 }
 
-export function getLockoutState(nowMs: number): { isLocked: boolean; remainingMs: number; failedAttempts: number } {
-  const lockout = safeReadJson<LockoutState>(KEYS.ADMIN_LOCKOUT, { failedAttempts: 0, lockedUntil: null });
+export function getLockoutState(nowMs: number): {
+  isLocked: boolean;
+  remainingMs: number;
+  failedAttempts: number;
+} {
+  const lockout = safeReadJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
+    failedAttempts: 0,
+    lockedUntil: null,
+  });
   let failedAttempts = lockout.failedAttempts || 0;
   let lockedUntil = lockout.lockedUntil || null;
   const remote = firestoreLockoutCache;
@@ -509,7 +479,12 @@ export function getLockoutState(nowMs: number): { isLocked: boolean; remainingMs
   return { isLocked: true, remainingMs: lockedUntil - nowMs, failedAttempts };
 }
 
-function appendAuditLog(action: AuditAction, targetName: string, adminEmail: string, details?: string): AuditLogEntry {
+function appendAuditLog(
+  action: AuditAction,
+  targetName: string,
+  adminEmail: string,
+  details?: string
+): AuditLogEntry {
   const entry: AuditLogEntry = {
     id: `audit_${Date.now()}_${generateRandomHex(8)}`,
     timestamp: new Date().toISOString(),
@@ -543,7 +518,7 @@ function saveSession(session: AdminSession | null): void {
 
 export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession | null {
   try {
-    enforceSingleAdminAndEnglishData();
+    cleanupLegacyLocalStorage();
     const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw) as AdminSession;
@@ -551,10 +526,6 @@ export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession 
       saveSession(null);
       return null;
     }
-    // Session epoch: enforce it once the Firestore admin config is known.
-    // While it is still loading, refresh it in the background and validate
-    // the session against the local checks only (the config is re-checked
-    // by the admin page every second).
     if (adminConfigCache) {
       if (session.sessionEpoch !== adminConfigCache.sessionEpoch) {
         saveSession(null);
@@ -563,8 +534,6 @@ export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession 
     } else {
       refreshAdminConfigInBackground();
     }
-    // Firebase Auth: enforce once Auth has restored its state. Before
-    // that, the local session checks below still apply.
     if (authReady) {
       const user = getFirebaseAuth().currentUser;
       if (!user || user.email?.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
@@ -574,7 +543,12 @@ export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession 
     }
     if (nowMs - session.lastActivityAt >= INACTIVITY_TIMEOUT_MS || nowMs >= session.expiresAt) {
       saveSession(null);
-      appendAuditLog('AUTO_LOGOUT_INACTIVITY', 'Admin Session', AUTHORIZED_ADMIN_EMAIL, 'Session ended after 15 minutes of inactivity');
+      appendAuditLog(
+        'AUTO_LOGOUT_INACTIVITY',
+        'Admin Session',
+        AUTHORIZED_ADMIN_EMAIL,
+        'Session ended after 15 minutes of inactivity'
+      );
       return null;
     }
     return session;
@@ -587,7 +561,11 @@ export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession 
 export function touchAdminSession(nowMs: number): AdminSession | null {
   const active = getActiveAdminSession(nowMs);
   if (!active) return null;
-  const refreshed: AdminSession = { ...active, lastActivityAt: nowMs, expiresAt: nowMs + INACTIVITY_TIMEOUT_MS };
+  const refreshed: AdminSession = {
+    ...active,
+    lastActivityAt: nowMs,
+    expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
+  };
   saveSession(refreshed);
   return refreshed;
 }
@@ -603,33 +581,55 @@ function assertAuthorizedAdminSession(session: AdminSession | null): AdminSessio
   if (active.sessionEpoch !== session.sessionEpoch) {
     throw new Error('Admin session expired. Sign in again.');
   }
+  const user = getFirebaseAuth().currentUser;
+  if (!user || user.email?.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
+    throw new Error('Firebase authentication session expired. Sign in again.');
+  }
   return active;
 }
 
-function recordFailedLoginAttempt(nowMs: number, failedAttempts: number): { ok: false; error: string; lockedUntil?: number } {
+function recordFailedLoginAttempt(
+  nowMs: number,
+  failedAttempts: number
+): { ok: false; error: string; lockedUntil?: number } {
   const attempts = failedAttempts + 1;
   const lockedUntil = attempts >= MAX_FAILED_ATTEMPTS ? nowMs + LOCKOUT_DURATION_MS : null;
   const state: LockoutState = { failedAttempts: attempts, lockedUntil };
   safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, state);
   void mirrorLockoutToFirestore(state);
   if (lockedUntil) {
-    return { ok: false, error: 'Too many failed attempts. Admin login is temporarily locked for 15 minutes.', lockedUntil };
+    return {
+      ok: false,
+      error: 'Too many failed attempts. Admin login is temporarily locked for 15 minutes.',
+      lockedUntil,
+    };
   }
   return { ok: false, error: 'Login failed. Invalid email or password.' };
 }
 
-export async function loginAdmin(emailInput: string, password: string): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string; lockedUntil?: number }> {
+export async function loginAdmin(
+  emailInput: string,
+  password: string
+): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string; lockedUntil?: number }> {
   const nowMs = Date.now();
   const lockout = getLockoutState(nowMs);
   if (lockout.isLocked) {
-    return { ok: false, error: 'Too many failed attempts. Admin login is temporarily locked.', lockedUntil: nowMs + lockout.remainingMs };
+    return {
+      ok: false,
+      error: 'Too many failed attempts. Admin login is temporarily locked.',
+      lockedUntil: nowMs + lockout.remainingMs,
+    };
   }
   const emailNorm = emailInput.trim().toLowerCase();
   if (!constantTimeEqual(emailNorm, AUTHORIZED_ADMIN_EMAIL)) {
     return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
   }
   try {
-    const credential = await signInWithEmailAndPassword(getFirebaseAuth(), AUTHORIZED_ADMIN_EMAIL, password);
+    const credential = await signInWithEmailAndPassword(
+      getFirebaseAuth(),
+      AUTHORIZED_ADMIN_EMAIL,
+      password
+    );
     if (credential.user.email?.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
       await signOut(getFirebaseAuth());
       return { ok: false, error: 'Login failed. Invalid email or password.' };
@@ -664,21 +664,36 @@ export function logoutAdmin(session: AdminSession | null): void {
 export function logoutAllAdminSessions(session: AdminSession | null): void {
   const verified = assertAuthorizedAdminSession(session);
   const nextEpoch = (adminConfigCache?.sessionEpoch ?? verified.sessionEpoch) + 1;
-  adminConfigCache = adminConfigCache ? { ...adminConfigCache, sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() } : null;
+  adminConfigCache = adminConfigCache
+    ? { ...adminConfigCache, sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() }
+    : null;
   adminConfigCacheAt = Date.now();
   void (async () => {
     try {
-      await setDoc(doc(getFirestoreDb(), 'admin', 'config'), { sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() }, { merge: true });
+      await setDoc(
+        doc(getFirestoreDb(), 'admin', 'config'),
+        { sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
     } catch {
       // The local session is revoked regardless.
     }
   })();
-  appendAuditLog('LOGOUT_ALL_SESSIONS', 'All Active Sessions', verified.email, 'Revoked all sessions across browser tabs');
+  appendAuditLog(
+    'LOGOUT_ALL_SESSIONS',
+    'All Active Sessions',
+    verified.email,
+    'Revoked all sessions across browser tabs'
+  );
   saveSession(null);
-  notifyDataChanged();
 }
 
-export async function adminChangePassword(session: AdminSession | null, currentPassword: string, newPassword: string, confirmNewPassword: string): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
+export async function adminChangePassword(
+  session: AdminSession | null,
+  currentPassword: string,
+  newPassword: string,
+  confirmNewPassword: string
+): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
   const verified = assertAuthorizedAdminSession(session);
   const user = getFirebaseAuth().currentUser;
   if (!user || !user.email) {
@@ -710,15 +725,19 @@ export async function adminChangePassword(session: AdminSession | null, currentP
     return { ok: false, error: 'Could not change the password. Please try again.' };
   }
   const nextEpoch = (adminConfigCache?.sessionEpoch ?? verified.sessionEpoch) + 1;
-  adminConfigCache = adminConfigCache ? { ...adminConfigCache, sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() } : null;
+  adminConfigCache = adminConfigCache
+    ? { ...adminConfigCache, sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() }
+    : null;
   adminConfigCacheAt = Date.now();
-  void (async () => {
-    try {
-      await setDoc(doc(getFirestoreDb(), 'admin', 'config'), { sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() }, { merge: true });
-    } catch {
-      // The password itself was already changed in Firebase Auth.
-    }
-  })();
+  try {
+    await setDoc(
+      doc(getFirestoreDb(), 'admin', 'config'),
+      { sessionEpoch: nextEpoch, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch {
+    // Password was already changed in Firebase Auth.
+  }
   const nowMs = Date.now();
   const nextSession: AdminSession = {
     token: generateRandomHex(32),
@@ -729,8 +748,12 @@ export async function adminChangePassword(session: AdminSession | null, currentP
     expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
   };
   saveSession(nextSession);
-  appendAuditLog('PASSWORD_CHANGED', 'Admin Account', verified.email, 'Password rotated and older sessions invalidated');
-  notifyDataChanged();
+  appendAuditLog(
+    'PASSWORD_CHANGED',
+    'Admin Account',
+    verified.email,
+    'Password rotated and older sessions invalidated'
+  );
   return { ok: true, session: nextSession };
 }
 
@@ -751,7 +774,9 @@ export async function fetchAuditLog(session: AdminSession | null): Promise<Audit
     [...local, ...remote].forEach((entry) => {
       if (entry && entry.id) merged.set(entry.id, entry);
     });
-    const sorted = [...merged.values()].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 500);
+    const sorted = [...merged.values()]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 500);
     safeWriteJson(KEYS.AUDIT_LOG, sorted);
     return sorted;
   } catch {
@@ -780,9 +805,15 @@ function validateMatchInput(input: MatchInput): { ok: boolean; error?: string } 
   if (teamA.value === teamB.value) {
     return { ok: false, error: 'Team A and Team B must be different.' };
   }
-  const tournament = validateSafeText(input.tournament, 'Tournament', { required: true, maxLength: 160 });
+  const tournament = validateSafeText(input.tournament, 'Tournament', {
+    required: true,
+    maxLength: 160,
+  });
   if (!tournament.valid) return { ok: false, error: tournament.error };
-  const matchNumber = validateSafeText(input.matchNumber, 'Match Number', { required: true, maxLength: 80 });
+  const matchNumber = validateSafeText(input.matchNumber, 'Match Number', {
+    required: true,
+    maxLength: 80,
+  });
   if (!matchNumber.valid) return { ok: false, error: matchNumber.error };
   const venue = validateSafeText(input.venue, 'Venue', { required: true, maxLength: 200 });
   if (!venue.valid) return { ok: false, error: venue.error };
@@ -804,18 +835,27 @@ function validateMatchInput(input: MatchInput): { ok: boolean; error?: string } 
   return { ok: true };
 }
 
-export function adminCreateMatch(session: AdminSession | null, input: MatchInput): { ok: boolean; match?: CricketMatch; error?: string } {
+export async function adminCreateMatch(
+  session: AdminSession | null,
+  input: MatchInput
+): Promise<{ ok: boolean; match?: CricketMatch; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
   const validation = validateMatchInput(input);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
-  const matches = getPublicMatches();
-  const slug = generateCleanSlug(input.teamA, input.teamB, matches.map((match) => match.slug));
+  const slug = generateCleanSlug(
+    input.teamA,
+    input.teamB,
+    liveMatches.map((match) => match.slug)
+  );
   const nowIso = new Date().toISOString();
   const match: CricketMatch = {
     id: `match_${Date.now()}_${generateRandomHex(6)}`,
@@ -833,33 +873,50 @@ export function adminCreateMatch(session: AdminSession | null, input: MatchInput
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  const next = [...matches, match];
-  safeWriteJson(KEYS.MATCHES, next);
-  void persistMatchToFirestore(match);
-  appendAuditLog('MATCH_CREATED', `${match.teamA} vs ${match.teamB}`, AUTHORIZED_ADMIN_EMAIL, `${match.tournament} · ${match.date} ${match.startTime} IST`);
-  notifyDataChanged();
+  try {
+    await setDoc(doc(getFirestoreDb(), 'matches', match.id), stripUndefined(match));
+  } catch {
+    return { ok: false, error: 'Failed to save match to Firestore. Check your connection and try again.' };
+  }
+  appendAuditLog(
+    'MATCH_CREATED',
+    `${match.teamA} vs ${match.teamB}`,
+    AUTHORIZED_ADMIN_EMAIL,
+    `${match.tournament} · ${match.date} ${match.startTime} IST`
+  );
   return { ok: true, match };
 }
 
-export function adminUpdateMatch(session: AdminSession | null, matchId: string, input: MatchInput): { ok: boolean; match?: CricketMatch; error?: string } {
+export async function adminUpdateMatch(
+  session: AdminSession | null,
+  matchId: string,
+  input: MatchInput
+): Promise<{ ok: boolean; match?: CricketMatch; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
   const validation = validateMatchInput(input);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
-  const matches = getPublicMatches();
-  const target = matches.find((match) => match.id === matchId);
+  const target = liveMatches.find((match) => match.id === matchId);
   if (!target) {
     return { ok: false, error: 'Match not found.' };
   }
-  const others = matches.filter((match) => match.id !== matchId);
-  const slug = target.slug && target.teamA === input.teamA.trim() && target.teamB === input.teamB.trim()
-    ? target.slug
-    : generateCleanSlug(input.teamA, input.teamB, others.map((match) => match.slug));
+  const others = liveMatches.filter((match) => match.id !== matchId);
+  const slug =
+    target.slug && target.teamA === input.teamA.trim() && target.teamB === input.teamB.trim()
+      ? target.slug
+      : generateCleanSlug(
+          input.teamA,
+          input.teamB,
+          others.map((match) => match.slug)
+        );
   const updated: CricketMatch = {
     ...target,
     slug,
@@ -875,28 +932,47 @@ export function adminUpdateMatch(session: AdminSession | null, matchId: string, 
     channelIds: [...input.channelIds],
     updatedAt: new Date().toISOString(),
   };
-  safeWriteJson(KEYS.MATCHES, [...others, updated]);
-  void persistMatchToFirestore(updated);
-  appendAuditLog('MATCH_UPDATED', `${updated.teamA} vs ${updated.teamB}`, AUTHORIZED_ADMIN_EMAIL, `${updated.tournament} · ${updated.date} ${updated.startTime} IST`);
-  notifyDataChanged();
+  try {
+    await setDoc(doc(getFirestoreDb(), 'matches', updated.id), stripUndefined(updated));
+  } catch {
+    return { ok: false, error: 'Failed to update match in Firestore. Check your connection and try again.' };
+  }
+  appendAuditLog(
+    'MATCH_UPDATED',
+    `${updated.teamA} vs ${updated.teamB}`,
+    AUTHORIZED_ADMIN_EMAIL,
+    `${updated.tournament} · ${updated.date} ${updated.startTime} IST`
+  );
   return { ok: true, match: updated };
 }
 
-export function adminDeleteMatch(session: AdminSession | null, matchId: string): { ok: boolean; error?: string } {
+export async function adminDeleteMatch(
+  session: AdminSession | null,
+  matchId: string
+): Promise<{ ok: boolean; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
-  const matches = getPublicMatches();
-  const target = matches.find((match) => match.id === matchId);
+  const target = liveMatches.find((match) => match.id === matchId);
   if (!target) {
     return { ok: false, error: 'Match not found.' };
   }
-  safeWriteJson(KEYS.MATCHES, matches.filter((match) => match.id !== matchId));
-  void deleteMatchFromFirestore(matchId);
-  appendAuditLog('MATCH_DELETED', `${target.teamA} vs ${target.teamB}`, AUTHORIZED_ADMIN_EMAIL, `${target.tournament} · ${target.date} ${target.startTime} IST`);
-  notifyDataChanged();
+  try {
+    await deleteDoc(doc(getFirestoreDb(), 'matches', matchId));
+  } catch {
+    return { ok: false, error: 'Failed to delete match from Firestore. Check your connection and try again.' };
+  }
+  appendAuditLog(
+    'MATCH_DELETED',
+    `${target.teamA} vs ${target.teamB}`,
+    AUTHORIZED_ADMIN_EMAIL,
+    `${target.tournament} · ${target.date} ${target.startTime} IST`
+  );
   return { ok: true };
 }
 
@@ -916,17 +992,22 @@ function validateChannelInput(input: ChannelInput): { ok: boolean; error?: strin
   return { ok: true };
 }
 
-export function adminCreateChannel(session: AdminSession | null, input: ChannelInput): { ok: boolean; channel?: Channel; error?: string } {
+export async function adminCreateChannel(
+  session: AdminSession | null,
+  input: ChannelInput
+): Promise<{ ok: boolean; channel?: Channel; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
   const validation = validateChannelInput(input);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
-  const channels = getPublicChannels();
   const nowIso = new Date().toISOString();
   const channel: Channel = {
     id: `channel_${Date.now()}_${generateRandomHex(6)}`,
@@ -936,25 +1017,33 @@ export function adminCreateChannel(session: AdminSession | null, input: ChannelI
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  safeWriteJson(KEYS.CHANNELS, [...channels, channel]);
-  void persistChannelToFirestore(channel);
+  try {
+    await setDoc(doc(getFirestoreDb(), 'channels', channel.id), stripUndefined(channel));
+  } catch {
+    return { ok: false, error: 'Failed to save channel to Firestore. Check your connection and try again.' };
+  }
   appendAuditLog('CHANNEL_CREATED', channel.name, AUTHORIZED_ADMIN_EMAIL, `${channel.language} channel`);
-  notifyDataChanged();
   return { ok: true, channel };
 }
 
-export function adminUpdateChannel(session: AdminSession | null, channelId: string, input: ChannelInput): { ok: boolean; channel?: Channel; error?: string } {
+export async function adminUpdateChannel(
+  session: AdminSession | null,
+  channelId: string,
+  input: ChannelInput
+): Promise<{ ok: boolean; channel?: Channel; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
   const validation = validateChannelInput(input);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
-  const channels = getPublicChannels();
-  const target = channels.find((channel) => channel.id === channelId);
+  const target = liveChannels.find((channel) => channel.id === channelId);
   if (!target) {
     return { ok: false, error: 'Channel not found.' };
   }
@@ -965,34 +1054,49 @@ export function adminUpdateChannel(session: AdminSession | null, channelId: stri
     streamUrl: input.streamUrl.trim(),
     updatedAt: new Date().toISOString(),
   };
-  safeWriteJson(KEYS.CHANNELS, channels.map((channel) => (channel.id === channelId ? updated : channel)));
-  void persistChannelToFirestore(updated);
+  try {
+    await setDoc(doc(getFirestoreDb(), 'channels', updated.id), stripUndefined(updated));
+  } catch {
+    return { ok: false, error: 'Failed to update channel in Firestore. Check your connection and try again.' };
+  }
   appendAuditLog('CHANNEL_UPDATED', updated.name, AUTHORIZED_ADMIN_EMAIL, `${updated.language} channel`);
-  notifyDataChanged();
   return { ok: true, channel: updated };
 }
 
-export function adminDeleteChannel(session: AdminSession | null, channelId: string): { ok: boolean; error?: string } {
+export async function adminDeleteChannel(
+  session: AdminSession | null,
+  channelId: string
+): Promise<{ ok: boolean; error?: string }> {
   try {
     assertAuthorizedAdminSession(session);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
   }
-  const channels = getPublicChannels();
-  const target = channels.find((channel) => channel.id === channelId);
+  const target = liveChannels.find((channel) => channel.id === channelId);
   if (!target) {
     return { ok: false, error: 'Channel not found.' };
   }
-  const matches = getPublicMatches();
-  const cleanedMatches = matches.map((match) => ({
-    ...match,
-    channelIds: match.channelIds.filter((id) => id !== channelId),
-  }));
-  safeWriteJson(KEYS.MATCHES, cleanedMatches);
-  void persistMatchesToFirestore(cleanedMatches);
-  safeWriteJson(KEYS.CHANNELS, channels.filter((channel) => channel.id !== channelId));
-  void deleteChannelFromFirestore(channelId);
+  try {
+    const db = getFirestoreDb();
+    const batch = writeBatch(db);
+    liveMatches.forEach((match) => {
+      if (match.channelIds.includes(channelId)) {
+        const cleanedMatch: CricketMatch = {
+          ...match,
+          channelIds: match.channelIds.filter((id) => id !== channelId),
+          updatedAt: new Date().toISOString(),
+        };
+        batch.set(doc(db, 'matches', match.id), stripUndefined(cleanedMatch));
+      }
+    });
+    batch.delete(doc(db, 'channels', channelId));
+    await batch.commit();
+  } catch {
+    return { ok: false, error: 'Failed to delete channel from Firestore. Check your connection and try again.' };
+  }
   appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `${target.language} channel`);
-  notifyDataChanged();
   return { ok: true };
 }

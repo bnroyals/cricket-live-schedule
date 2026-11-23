@@ -1,5 +1,6 @@
 import { ArrowLeft, Calendar, Clock, MapPin, Play, Tv } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
+import { getSafeEmbedUrl } from '../lib/security';
 import {
   formatDisplayDate,
   formatIstTime,
@@ -14,10 +15,27 @@ interface MatchPageProps {
   match: CricketMatch | null;
   channels: Channel[];
   nowMs: number;
+  loading?: boolean;
 }
 
-export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
+export function MatchPage({ match, channels, nowMs, loading = false }: MatchPageProps) {
   const navigate = useNavigate();
+
+  if (loading && !match) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-16">
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-xs p-8 sm:p-12 text-center">
+          <p className="text-xs font-semibold text-emerald-700">Live Schedule</p>
+          <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-slate-900 mt-2">
+            Loading Match Details
+          </h1>
+          <p className="text-sm text-slate-600 mt-3">
+            Fetching live fixture details...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Auto-deleted or expired match view
   if (!match) {
@@ -62,6 +80,21 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
   const assignedChannels = match.channelIds
     .map((id) => channels.find((c) => c.id === id))
     .filter((c): c is Channel => Boolean(c));
+
+  const primaryChannel =
+    assignedChannels.find((c) => Boolean(getSafeEmbedUrl(c.streamUrl))) ??
+    assignedChannels[0] ??
+    channels.find((c) => Boolean(getSafeEmbedUrl(c.streamUrl))) ??
+    channels[0] ??
+    null;
+
+  const handlePrimaryWatch = () => {
+    if (primaryChannel) {
+      navigate(`/watch/${encodeURIComponent(primaryChannel.id)}`);
+    } else {
+      navigate('/channels');
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
@@ -161,7 +194,7 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
                   Match is LIVE now
                 </p>
                 <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                  Tap Watch below to choose your live broadcast channel.
+                  Tap Watch below to open the built-in live broadcast player.
                 </p>
               </div>
             ) : (
@@ -206,27 +239,54 @@ export function MatchPage({ match, channels, nowMs }: MatchPageProps) {
           </div>
         </dl>
 
-        {/* Broadcast Channels Listing — Clean English channel names only */}
+        {/* Broadcast Channels — Clickable In-App Live Player Links */}
         {assignedChannels.length > 0 && (
           <div className="mt-6 pt-6 border-t border-slate-200">
             <p className="text-xs font-medium text-slate-500">
               Broadcast Channels
             </p>
-            <p className="mt-1.5 text-sm font-semibold text-slate-800">
-              {assignedChannels.map((ch) => ch.name).join('  ·  ')}
-            </p>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {assignedChannels.map((ch) => (
+                <button
+                  key={ch.id}
+                  type="button"
+                  onClick={() => navigate(`/watch/${encodeURIComponent(ch.id)}`)}
+                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-400 text-left transition-colors min-h-[48px]"
+                >
+                  <div className="min-w-0">
+                    <span className="block text-sm font-bold text-slate-900 truncate">{ch.name}</span>
+                    <span className="block text-xs text-slate-600">{ch.language}</span>
+                  </div>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 shrink-0">
+                    <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
+                    <span>Watch</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Primary Focal CTA — Goes directly to Permanent Channels Page */}
-        <div className="mt-8">
+        {/* Primary Focal CTA — Opens In-App Embedded Live Player */}
+        <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <button
+            type="button"
+            onClick={handlePrimaryWatch}
+            className="flex-1 min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+          >
+            <Play className="w-5 h-5 fill-current" aria-hidden="true" />
+            <span>
+              {primaryChannel ? `Watch Live on ${primaryChannel.name}` : 'Watch Live'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => navigate('/channels')}
-            className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+            className="min-h-[52px] px-5 py-3.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-colors"
           >
-            <Play className="w-5 h-5 fill-current" aria-hidden="true" />
-            <span>Watch Live on Channels</span>
+            <Tv className="w-4 h-4" aria-hidden="true" />
+            <span>All Channels</span>
           </button>
         </div>
       </section>

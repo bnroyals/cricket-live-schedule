@@ -175,7 +175,26 @@ export function validateSafeText(
 }
 
 /**
- * Validates an optional stream URL. Allows empty string (placeholder) or strict http/https URLs.
+ * Returns true if the URL belongs to a source known to block iframe embedding
+ * via X-Frame-Options: SAMEORIGIN / 403.
+ */
+export function isFramingBlockedStreamUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw.trim()).hostname.toLowerCase();
+    return (
+      host === 'playsza.st' ||
+      host.endsWith('.playsza.st') ||
+      host.includes('playsza') ||
+      host.includes('crichd')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates an optional embeddable stream URL. Allows empty string or strict http/https URLs
+ * from embeddable sources (blocks framing-blocked playsza/CricHD hosts).
  */
 export function validateStreamUrl(raw: string): { valid: boolean; value: string; error?: string } {
   const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, '').trim();
@@ -201,6 +220,13 @@ export function validateStreamUrl(raw: string): { valid: boolean; value: string;
         error: 'Stream URL must start with https:// or http://.',
       };
     }
+    if (isFramingBlockedStreamUrl(parsed.toString())) {
+      return {
+        valid: false,
+        value: '',
+        error: 'This source blocks embedded playback. Enter an embeddable stream URL or leave blank.',
+      };
+    }
     return { valid: true, value: parsed.toString() };
   } catch {
     return {
@@ -212,13 +238,20 @@ export function validateStreamUrl(raw: string): { valid: boolean; value: string;
 }
 
 /**
- * Safe runtime check before using any stored URL in href attributes.
+ * Safe runtime check before embedding any stored stream URL in an in-app iframe.
  */
-export function getSafeExternalUrl(url: string): string | null {
+export function getSafeEmbedUrl(url: string): string | null {
   if (!url) return null;
   const check = validateStreamUrl(url);
   if (!check.valid || !check.value) return null;
   return check.value;
+}
+
+/**
+ * Safe runtime check for external URL validation.
+ */
+export function getSafeExternalUrl(url: string): string | null {
+  return getSafeEmbedUrl(url);
 }
 
 /**

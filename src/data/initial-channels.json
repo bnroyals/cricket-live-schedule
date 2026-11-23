@@ -1,0 +1,38 @@
+[
+  {
+    "id": "sony-sports-ten-one",
+    "name": "Sony Sports Ten 1",
+    "language": "English",
+    "streamUrl": "https://zlive.st/watch/auto-sony-sports-network"
+  },
+  {
+    "id": "sony-sports-ten-three",
+    "name": "Sony Sports Ten 3",
+    "language": "Hindi",
+    "streamUrl": "https://zlive.st/watch/auto-sony-sports-network-3"
+  },
+  {
+    "id": "willow-cricket",
+    "name": "Willow Cricket",
+    "language": "English",
+    "streamUrl": "https://pijirege.st/event/willow-m"
+  },
+  {
+    "id": "ptv-sports",
+    "name": "PTV Sports",
+    "language": "English",
+    "streamUrl": ""
+  },
+  {
+    "id": "willow-hd",
+    "name": "Willow HD",
+    "language": "English",
+    "streamUrl": "https://zlive.st/watch/auto-willow-cricket-2"
+  },
+  {
+    "id": "channel-hd",
+    "name": "Channel HD",
+    "language": "English",
+    "streamUrl": ""
+  }
+]

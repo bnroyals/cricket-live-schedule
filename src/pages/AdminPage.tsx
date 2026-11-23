@@ -13,7 +13,7 @@ import {
   Tv,
   Calendar,
   FileText,
-  ExternalLink,
+  ArrowUpRight,
   AlertTriangle,
 } from 'lucide-react';
 import type {
@@ -32,6 +32,7 @@ import {
   adminGetAuditLog,
   adminUpdateChannel,
   adminUpdateMatch,
+  ensureSeedData,
   fetchAdminConfigured,
   fetchAuditLog,
   fetchLockoutState,
@@ -109,11 +110,13 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [matchForm, setMatchForm] = useState(() => createEmptyMatchForm());
   const [confirmDeleteMatchId, setConfirmDeleteMatchId] = useState<string | null>(null);
+  const [matchSubmitting, setMatchSubmitting] = useState(false);
 
   // Channel CRUD State
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [channelForm, setChannelForm] = useState(EMPTY_CHANNEL_FORM);
   const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<string | null>(null);
+  const [channelSubmitting, setChannelSubmitting] = useState(false);
 
   // Change Password State
   const [currentPw, setCurrentPw] = useState('');
@@ -153,6 +156,9 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         if (cancelled) return;
         const restored = getActiveAdminSession(Date.now());
         setSession(restored);
+        if (restored) {
+          void ensureSeedData();
+        }
         setNowMs(Date.now());
       } finally {
         if (!cancelled) setAuthChecking(false);
@@ -300,13 +306,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   // MATCH CRUD HANDLERS
   // ============================================================================
 
-  const handleMatchSubmit = (e: React.FormEvent) => {
+  const handleMatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
+    setMatchSubmitting(true);
     try {
       const res = editingMatchId
-        ? adminUpdateMatch(session, editingMatchId, matchForm)
-        : adminCreateMatch(session, matchForm);
+        ? await adminUpdateMatch(session, editingMatchId, matchForm)
+        : await adminCreateMatch(session, matchForm);
 
       if (!res.ok || !res.match) {
         setFeedback({ type: 'error', text: res.error || 'Unable to save match.' });
@@ -328,6 +335,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         type: 'error',
         text: err instanceof Error ? err.message : 'Unable to save match.',
       });
+    } finally {
+      setMatchSubmitting(false);
     }
   };
 
@@ -349,10 +358,10 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDeleteMatch = (matchId: string) => {
+  const handleDeleteMatch = async (matchId: string) => {
     setFeedback(null);
     try {
-      const res = adminDeleteMatch(session, matchId);
+      const res = await adminDeleteMatch(session, matchId);
       if (!res.ok) {
         setFeedback({ type: 'error', text: res.error || 'Unable to delete match.' });
         return;
@@ -386,13 +395,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   // CHANNEL CRUD HANDLERS
   // ============================================================================
 
-  const handleChannelSubmit = (e: React.FormEvent) => {
+  const handleChannelSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
+    setChannelSubmitting(true);
     try {
       const res = editingChannelId
-        ? adminUpdateChannel(session, editingChannelId, channelForm)
-        : adminCreateChannel(session, channelForm);
+        ? await adminUpdateChannel(session, editingChannelId, channelForm)
+        : await adminCreateChannel(session, channelForm);
 
       if (!res.ok || !res.channel) {
         setFeedback({ type: 'error', text: res.error || 'Unable to save channel.' });
@@ -402,8 +412,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setFeedback({
         type: 'success',
         text: editingChannelId
-          ? `Channel updated: ${res.channel.name}`
-          : `Channel added: ${res.channel.name}`,
+          ? `Channel updated: ${res.channel.name} (${res.channel.language})`
+          : `Channel added: ${res.channel.name} (${res.channel.language})`,
       });
       setEditingChannelId(null);
       setChannelForm(EMPTY_CHANNEL_FORM);
@@ -414,6 +424,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         type: 'error',
         text: err instanceof Error ? err.message : 'Unable to save channel.',
       });
+    } finally {
+      setChannelSubmitting(false);
     }
   };
 
@@ -421,17 +433,17 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     setEditingChannelId(ch.id);
     setChannelForm({
       name: ch.name,
-      language: ch.language.trim().toLowerCase() === 'hindi' ? 'English' : ch.language,
+      language: ch.language,
       streamUrl: ch.streamUrl,
     });
     setFeedback(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDeleteChannel = (channelId: string) => {
+  const handleDeleteChannel = async (channelId: string) => {
     setFeedback(null);
     try {
-      const res = adminDeleteChannel(session, channelId);
+      const res = await adminDeleteChannel(session, channelId);
       if (!res.ok) {
         setFeedback({ type: 'error', text: res.error || 'Unable to delete channel.' });
         return;
@@ -1011,10 +1023,17 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
 
                 <button
                   type="submit"
-                  className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
+                  disabled={matchSubmitting}
+                  className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
                 >
                   <Plus className="w-4 h-4" aria-hidden="true" />
-                  <span>{editingMatchId ? 'Save Match Changes' : 'Schedule Match'}</span>
+                  <span>
+                    {matchSubmitting
+                      ? 'Saving...'
+                      : editingMatchId
+                        ? 'Save Match Changes'
+                        : 'Schedule Match'}
+                  </span>
                 </button>
               </form>
             </section>
@@ -1070,7 +1089,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                             className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline font-mono-tabular"
                           >
                             <span>/match/{m.slug}</span>
-                            <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                            <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
                           </button>
                         </div>
 
@@ -1174,14 +1193,14 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                     maxLength={40}
                     value={channelForm.language}
                     onChange={(e) => setChannelForm((f) => ({ ...f, language: e.target.value }))}
-                    placeholder="e.g. English"
+                    placeholder="e.g. English or Hindi"
                     className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label htmlFor="ch-url" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Live Stream URL (https:// or leave blank)
+                    Embeddable Stream URL (https:// or leave blank)
                   </label>
                   <input
                     id="ch-url"
@@ -1189,17 +1208,24 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                     maxLength={500}
                     value={channelForm.streamUrl}
                     onChange={(e) => setChannelForm((f) => ({ ...f, streamUrl: e.target.value }))}
-                    placeholder="https://example.com/live-stream"
+                    placeholder="https://example.com/embed-player"
                     className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
+                  disabled={channelSubmitting}
+                  className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
                 >
                   <Plus className="w-4 h-4" aria-hidden="true" />
-                  <span>{editingChannelId ? 'Save Channel Changes' : 'Add Channel'}</span>
+                  <span>
+                    {channelSubmitting
+                      ? 'Saving...'
+                      : editingChannelId
+                        ? 'Save Channel Changes'
+                        : 'Add Channel'}
+                  </span>
                 </button>
               </form>
             </section>
@@ -1217,17 +1243,15 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
               <div className="divide-y divide-slate-200 mt-2">
                 {channels.map((ch) => {
                   const confirming = confirmDeleteChannelId === ch.id;
-                  const displayLang =
-                    ch.language.trim().toLowerCase() === 'hindi' ? 'English' : ch.language;
                   return (
                     <div key={ch.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="min-w-0">
                         <h3 className="text-base font-bold text-slate-900">{ch.name}</h3>
                         <p className="text-xs text-slate-600 mt-0.5 truncate">
-                          <span className="font-semibold text-slate-800">{displayLang}</span>
+                          <span className="font-semibold text-slate-800">{ch.language}</span>
                           <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
                           <span className={ch.streamUrl ? 'text-emerald-700 font-medium' : 'text-amber-700'}>
-                            {ch.streamUrl ? ch.streamUrl : 'Empty placeholder URL'}
+                            {ch.streamUrl ? ch.streamUrl : 'No stream URL set'}
                           </span>
                         </p>
                       </div>
