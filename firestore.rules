@@ -1,0 +1,38 @@
+// Firestore security rules for Cricket Live Schedule & Watch.
+// This is a copy of the rules published in the Firebase console for the
+// named database ai-studio-30b42b8b-4b83-4f1f-9a76-fdb72f4fc7a5
+// (project crypto-tranquility-jf6jr). Public content (matches/channels) is
+// readable by everyone and writable only by the authenticated admin
+// biswajitcopy3@gmail.com. The admin/config document is readable by
+// everyone (so the login page can tell setup from login) and writable only
+// by the admin. security/lockout holds only failed-login counters so the
+// 5-attempt lockout can be recorded before sign-in.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'biswajitcopy3@gmail.com';
+    }
+    match /admin/config {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /security/lockout {
+      allow read, write: if true;
+    }
+    match /matches/{matchId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /channels/{channelId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /auditLog/{entryId} {
+      allow read, write: if isAdmin();
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
