@@ -71,13 +71,39 @@ export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 export const MAX_FAILED_ATTEMPTS = 5;
 
 const SEED_CHANNELS: Channel[] = [
-  { id: 'sony-sports-ten-one', name: 'Sony Sports Ten 1', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'sony-sports-ten-three', name: 'Sony Sports Ten 3', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'willow-cricket', name: 'Willow Cricket', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'ptv-sports', name: 'PTV Sports', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'willow-hd', name: 'Willow HD', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'channel-hd', name: 'Channel HD', language: 'English', streamUrl: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'sony-sports-ten-one', name: 'Sony Sports Ten 1', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ten1', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'sony-sports-ten-three', name: 'Sony Sports Ten 3', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ten3', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'willow-cricket', name: 'Willow Cricket', language: 'English', streamUrl: 'https://pijirege.st/event/willow-m', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'ptv-sports', name: 'PTV Sports', language: 'English', streamUrl: 'https://playsza.st/player.php?id=ptvsp', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'willow-hd', name: 'Willow HD', language: 'English', streamUrl: 'https://playsza.st/player.php?id=willowhd', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'channel-hd', name: 'Channel HD', language: 'English', streamUrl: 'https://playsza.st/player.php?id=willow', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
 ];
+
+const SEED_STREAM_URLS_BY_NAME = new Map<string, string>(
+  SEED_CHANNELS.map((c) => [c.name.trim().toLowerCase(), c.streamUrl])
+);
+
+function backfillSeedChannelStreamUrls(channels: Channel[]): { channels: Channel[]; backfilled: Channel[] } {
+  const backfilled: Channel[] = [];
+  const nowIso = new Date().toISOString();
+  const updated = channels.map((channel) => {
+    if (channel.streamUrl && channel.streamUrl.trim().length > 0) {
+      return channel;
+    }
+    const seedUrl = SEED_STREAM_URLS_BY_NAME.get(channel.name.trim().toLowerCase());
+    if (!seedUrl) {
+      return channel;
+    }
+    const nextChannel: Channel = {
+      ...channel,
+      streamUrl: seedUrl,
+      updatedAt: nowIso,
+    };
+    backfilled.push(nextChannel);
+    return nextChannel;
+  });
+  return { channels: updated, backfilled };
+}
 
 const SEED_MATCHES: CricketMatch[] = [
   {
@@ -333,9 +359,19 @@ export async function refreshPublicDataFromFirestore(): Promise<void> {
       await persistMatchesToFirestore(getPublicMatches());
     }
     if (!channelSnap.empty) {
-      const channels = channelSnap.docs.map((d) => d.data() as Channel);
+      const rawChannels = channelSnap.docs.map((d) => d.data() as Channel);
+      const { channels, backfilled } = backfillSeedChannelStreamUrls(rawChannels);
       safeWriteJson(KEYS.CHANNELS, channels);
       changed = true;
+      if (backfilled.length > 0 && getFirebaseAuth().currentUser) {
+        try {
+          const batch = writeBatch(db);
+          backfilled.forEach((c) => batch.set(doc(db, 'channels', c.id), stripUndefined(c)));
+          await batch.commit();
+        } catch {
+          // Best-effort Firestore backfill; local cache already holds the backfilled stream URLs.
+        }
+      }
     } else if (getFirebaseAuth().currentUser) {
       const db2 = getFirestoreDb();
       const batch = writeBatch(db2);
@@ -374,7 +410,14 @@ function enforceSingleAdminAndEnglishData(): void {
 
 export function ensureSeedData(): void {
   try {
-    if (window.localStorage.getItem(KEYS.SEEDED)) return;
+    if (window.localStorage.getItem(KEYS.SEEDED)) {
+      const existingChannels = safeReadJson<Channel[]>(KEYS.CHANNELS, []);
+      const { channels: updatedChannels, backfilled } = backfillSeedChannelStreamUrls(existingChannels);
+      if (backfilled.length > 0) {
+        safeWriteJson(KEYS.CHANNELS, updatedChannels);
+      }
+      return;
+    }
     const expiredSlugs = new Set(safeReadJson<string[]>(KEYS.EXPIRED_SLUGS, []));
     const matches = SEED_MATCHES.filter((match) => !expiredSlugs.has(match.id));
     safeWriteJson(KEYS.MATCHES, matches);
