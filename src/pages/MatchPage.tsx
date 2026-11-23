@@ -1,5 +1,7 @@
 import { ArrowLeft, Calendar, Clock, MapPin, Play, Tv } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
+import { PageContent } from '../components/PageContent';
+import { hasPageContent } from '../lib/pageContent';
 import { getSafeEmbedUrl } from '../lib/security';
 import {
   formatDisplayDate,
@@ -290,6 +292,13 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
           </button>
         </div>
       </section>
+
+      {/* Admin-Authored Rich Match Page Content */}
+      {hasPageContent(match.pageContent) && (
+        <section className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
+          <PageContent html={match.pageContent} />
+        </section>
+      )}
     </div>
   );
 }

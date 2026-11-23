@@ -56,6 +56,7 @@ import {
   getIstDateString,
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
+import { RichTextEditor } from '../components/RichTextEditor';
 
 interface AdminPageProps {
   matches: CricketMatch[];
@@ -77,6 +78,7 @@ function createEmptyMatchForm() {
     endTime: '19:30',
     status: 'Upcoming' as MatchStatus,
     channelIds: [] as string[],
+    pageContent: '',
   };
 }
 
@@ -84,6 +86,7 @@ const EMPTY_CHANNEL_FORM = {
   name: '',
   language: 'English',
   streamUrl: '',
+  pageContent: '',
 };
 
 export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) {
@@ -353,6 +356,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       endTime: match.endTime,
       status: match.status,
       channelIds: match.channelIds,
+      pageContent: match.pageContent ?? '',
     });
     setFeedback(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -435,6 +439,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       name: ch.name,
       language: ch.language,
       streamUrl: ch.streamUrl,
+      pageContent: ch.pageContent ?? '',
     });
     setFeedback(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1021,6 +1026,15 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   </div>
                 </div>
 
+                {/* Match Page Content — Blogger-style WYSIWYG Editor */}
+                <RichTextEditor
+                  id="match-page-content"
+                  label="Page Content"
+                  value={matchForm.pageContent}
+                  onChange={(html) => setMatchForm((f) => ({ ...f, pageContent: html }))}
+                  placeholder="Write match preview, pitch report, playing XI, links, or images..."
+                />
+
                 <button
                   type="submit"
                   disabled={matchSubmitting}
@@ -1212,6 +1226,15 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                     className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
+
+                {/* Channel Page Content — Blogger-style WYSIWYG Editor */}
+                <RichTextEditor
+                  id="channel-page-content"
+                  label="Page Content"
+                  value={channelForm.pageContent}
+                  onChange={(html) => setChannelForm((f) => ({ ...f, pageContent: html }))}
+                  placeholder="Write channel notes, schedule highlights, links, or images..."
+                />
 
                 <button
                   type="submit"

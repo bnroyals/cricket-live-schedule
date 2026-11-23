@@ -5,6 +5,7 @@ export interface Channel {
   name: string;
   language: string;
   streamUrl: string;
+  pageContent?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +26,7 @@ export interface CricketMatch {
   endTime: string;
   status: MatchStatus;
   channelIds: string[];
+  pageContent?: string;
   createdAt: string;
   updatedAt: string;
 }

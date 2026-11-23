@@ -133,6 +133,7 @@ function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
     .map((match) => ({
       ...match,
       channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
+      pageContent: typeof match.pageContent === 'string' ? match.pageContent : '',
     }))
     .sort((a, b) => {
       const aKey = `${a.date}T${a.startTime}`;
@@ -150,6 +151,7 @@ function normalizeChannels(raw: Channel[]): Channel[] {
         name: typeof channel.name === 'string' ? channel.name : '',
         language: typeof channel.language === 'string' ? channel.language : '',
         streamUrl: typeof channel.streamUrl === 'string' ? channel.streamUrl : '',
+        pageContent: typeof channel.pageContent === 'string' ? channel.pageContent : '',
       });
     }
   });
@@ -795,6 +797,7 @@ interface MatchInput {
   endTime: string;
   status: MatchStatus;
   channelIds: string[];
+  pageContent?: string;
 }
 
 function validateMatchInput(input: MatchInput): { ok: boolean; error?: string } {
@@ -870,6 +873,7 @@ export async function adminCreateMatch(
     endTime: input.endTime,
     status: input.status,
     channelIds: [...input.channelIds],
+    pageContent: typeof input.pageContent === 'string' ? input.pageContent : '',
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -930,6 +934,10 @@ export async function adminUpdateMatch(
     endTime: input.endTime,
     status: input.status,
     channelIds: [...input.channelIds],
+    pageContent:
+      input.pageContent !== undefined
+        ? input.pageContent
+        : (target.pageContent ?? ''),
     updatedAt: new Date().toISOString(),
   };
   try {
@@ -980,6 +988,7 @@ interface ChannelInput {
   name: string;
   language: string;
   streamUrl: string;
+  pageContent?: string;
 }
 
 function validateChannelInput(input: ChannelInput): { ok: boolean; error?: string } {
@@ -1014,6 +1023,7 @@ export async function adminCreateChannel(
     name: input.name.trim(),
     language: input.language.trim(),
     streamUrl: input.streamUrl.trim(),
+    pageContent: typeof input.pageContent === 'string' ? input.pageContent : '',
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -1052,6 +1062,10 @@ export async function adminUpdateChannel(
     name: input.name.trim(),
     language: input.language.trim(),
     streamUrl: input.streamUrl.trim(),
+    pageContent:
+      input.pageContent !== undefined
+        ? input.pageContent
+        : (target.pageContent ?? ''),
     updatedAt: new Date().toISOString(),
   };
   try {

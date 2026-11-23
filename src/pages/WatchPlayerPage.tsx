@@ -1,5 +1,7 @@
 import { ArrowLeft, Calendar, Play, Radio, Tv } from 'lucide-react';
 import type { Channel } from '../types/cricket';
+import { PageContent } from '../components/PageContent';
+import { hasPageContent } from '../lib/pageContent';
 import { getSafeEmbedUrl } from '../lib/security';
 import { useNavigate } from '../lib/router';
 
@@ -158,6 +160,13 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
           </div>
         </div>
       </section>
+
+      {/* Admin-Authored Rich Channel Page Content */}
+      {hasPageContent(channel.pageContent) && (
+        <section className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
+          <PageContent html={channel.pageContent} />
+        </section>
+      )}
 
       {/* In-App Channel Switcher */}
       {channels.length > 1 && (
