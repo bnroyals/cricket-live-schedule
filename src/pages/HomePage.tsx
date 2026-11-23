@@ -9,6 +9,7 @@ import {
   getIstTomorrowDateString,
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
+import { TeamNameWithFlag } from '../components/TeamNameWithFlag';
 
 interface HomePageProps {
   matches: CricketMatch[];
@@ -270,10 +271,10 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                   </div>
 
                   {/* Teams Headline */}
-                  <h3 className="font-display text-3xl sm:text-[34px] font-extrabold text-slate-900 tracking-tight mt-3 leading-tight">
-                    <span>{match.teamA}</span>
-                    <span className="mx-2.5 text-amber-600 font-bold text-2xl">vs</span>
-                    <span>{match.teamB}</span>
+                  <h3 className="font-display text-3xl sm:text-[34px] font-extrabold text-slate-900 tracking-tight mt-3 leading-tight flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                    <TeamNameWithFlag teamName={match.teamA} />
+                    <span className="text-amber-600 font-bold text-2xl">vs</span>
+                    <TeamNameWithFlag teamName={match.teamB} />
                   </h3>
 
                   {/* Time, Date & Venue */}
