@@ -1,5 +1,24 @@
+import {
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  writeBatch,
+} from 'firebase/firestore';
+import { ADMIN_EMAIL, getFirebaseAuth, getFirestoreDb } from './firebase';
 import type {
-  AdminAuthRecord,
   AdminSession,
   AuditAction,
   AuditLogEntry,
@@ -7,19 +26,37 @@ import type {
   CricketMatch,
   LockoutState,
   MatchStatus,
+  WatchLink,
 } from '../types/cricket';
 import {
-  constantTimeEqual,
   generateCleanSlug,
   generateRandomHex,
-  getDefaultHashIterations,
-  hashPasswordSha256,
   validateEmail,
   validateSafeText,
   validateStreamUrl,
   validateStrongPassword,
 } from './security';
 import { isMatchExpired } from './time';
+
+/**
+ * Admin auth + data storage (Firebase Auth + Firestore, server-side).
+ *
+ * The admin account and the matches / channels / audit data live in
+ * Firebase Auth + Firestore, NOT in browser localStorage. localStorage is
+ * used only as a local cache for public content and for the 15-minute
+ * inactivity session timer. Clearing browser data therefore never deletes
+ * the admin account: after clearing, this module still finds the admin
+ * record in Firestore (admin/config) and the admin page asks for login,
+ * never for setup again.
+ *
+ * Firestore rules (see firestore.rules, also published in the console):
+ * public read-only for matches/channels, write only for the authenticated
+ * admin biswajitcopy3@gmail.com. The admin/config document is readable by
+ * everyone so the login page can tell setup from login; only the admin can
+ * write it. security/lockout holds only failed-login counters.
+ */
+
+export const storageVersion = '2.0.0';
 
 const KEYS = {
   MATCHES: 'clsw_matches_v1',
@@ -32,903 +69,1106 @@ const KEYS = {
 } as const;
 
 const SESSION_STORAGE_KEY = 'clsw_admin_session_v1';
-
-/**
- * Single authorized administrator email. No other admin account can be registered or sign in.
- */
-export const AUTHORIZED_ADMIN_EMAIL = 'biswajitcopy3@gmail.com';
-
-export const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
-export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
-export const MAX_FAILED_ATTEMPTS = 5;
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_AUDIT_ENTRIES = 500;
+const LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
 const SEED_CHANNELS: Channel[] = [
-  {
-    id: 'sony-sports-ten-one',
-    name: 'Sony Sports Ten 1',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
-  {
-    id: 'sony-sports-ten-three',
-    name: 'Sony Sports Ten 3',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
-  {
-    id: 'willow-cricket',
-    name: 'Willow Cricket',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
-  {
-    id: 'ptv-sports',
-    name: 'PTV Sports',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
-  {
-    id: 'willow-hd',
-    name: 'Willow HD',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
-  {
-    id: 'channel-hd',
-    name: 'Channel HD',
-    language: 'English',
-    streamUrl: '',
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
+  { id: 'star-sports-1', name: 'Star Sports 1', description: 'Cricket · Hindi & English', logoUrl: '', streamUrl: 'https://www.hotstar.com/in/sports/cricket', country: 'India', language: 'English', isActive: true, createdAt: 1700000000000, updatedAt: 1700000000000 },
+  { id: 'jiohotstar', name: 'JioHotstar', description: 'Live cricket streaming', logoUrl: '', streamUrl: 'https://www.hotstar.com/in/sports/cricket', country: 'India', language: 'English', isActive: true, createdAt: 1700000001000, updatedAt: 1700000001000 },
+  { id: 'sky-sports-cricket', name: 'Sky Sports Cricket', description: 'Live cricket from England', logoUrl: '', streamUrl: 'https://www.skysports.com/cricket', country: 'United Kingdom', language: 'English', isActive: true, createdAt: 1700000002000, updatedAt: 1700000002000 },
+  { id: 'willow-tv', name: 'Willow TV', description: 'Live cricket in the USA', logoUrl: '', streamUrl: 'https://www.willow.tv', country: 'United States', language: 'English', isActive: true, createdAt: 1700000003000, updatedAt: 1700000003000 },
+  { id: 'ptv-sports', name: 'PTV Sports', description: 'Live cricket from Pakistan', logoUrl: '', streamUrl: 'https://www.ptvsports.pk', country: 'Pakistan', language: 'English', isActive: true, createdAt: 1700000004000, updatedAt: 1700000004000 },
 ];
 
 const SEED_MATCHES: CricketMatch[] = [
-  {
-    id: 'seed-ind-a-vs-pak-a',
-    slug: 'india-a-vs-pakistan-a',
-    teamA: 'India A',
-    teamB: 'Pakistan A',
-    tournament: "ACC Men's Asia Cup Rising Stars 2026",
-    matchNumber: 'Match 8',
-    venue: 'West End Park International Cricket Stadium, Doha',
-    date: '2026-11-22',
-    startTime: '15:30',
-    endTime: '19:30',
-    status: 'Upcoming',
-    channelIds: ['sony-sports-ten-three', 'willow-cricket'],
-    createdAt: '2026-11-22T00:00:00.000Z',
-    updatedAt: '2026-11-22T00:00:00.000Z',
-  },
+  { id: 'india-vs-australia-1st-t20i', series: 'Australia tour of India', teamA: 'India', teamB: 'Australia', matchDate: '2026-11-20', startTime: '19:00', endTime: '22:30', venue: 'Eden Gardens', status: 'completed', channels: ['star-sports-1', 'jiohotstar'], watchLinks: [{ label: 'Star Sports 1', url: 'https://www.hotstar.com/in/sports/cricket' }, { label: 'JioHotstar', url: 'https://www.hotstar.com/in/sports/cricket' }], streamUrls: ['https://www.hotstar.com/in/sports/cricket'], matchUrl: 'https://www.hotstar.com/in/sports/cricket', tags: ['T20I', 'India', 'Australia'], createdAt: 1700000000000, updatedAt: 1700000000000 },
+  { id: 'england-vs-south-africa-2nd-odi', series: 'South Africa tour of England', teamA: 'England', teamB: 'South Africa', matchDate: '2026-11-21', startTime: '15:30', endTime: '23:00', venue: "Lord's", status: 'completed', channels: ['sky-sports-cricket'], watchLinks: [{ label: 'Sky Sports Cricket', url: 'https://www.skysports.com/cricket' }], streamUrls: ['https://www.skysports.com/cricket'], matchUrl: 'https://www.skysports.com/cricket', tags: ['ODI', 'England', 'South Africa'], createdAt: 1700000001000, updatedAt: 1700000001000 },
+  { id: 'pakistan-vs-new-zealand-3rd-t20i', series: 'New Zealand tour of Pakistan', teamA: 'Pakistan', teamB: 'New Zealand', matchDate: '2026-11-22', startTime: '19:30', endTime: '23:00', venue: 'Gaddafi Stadium', status: 'completed', channels: ['ptv-sports', 'willow-tv'], watchLinks: [{ label: 'PTV Sports', url: 'https://www.ptvsports.pk' }, { label: 'Willow TV', url: 'https://www.willow.tv' }], streamUrls: ['https://www.ptvsports.pk', 'https://www.willow.tv'], matchUrl: 'https://www.willow.tv', tags: ['T20I', 'Pakistan', 'New Zealand'], createdAt: 1700000002000, updatedAt: 1700000002000 },
+  { id: 'india-vs-australia-2nd-t20i', series: 'Australia tour of India', teamA: 'India', teamB: 'Australia', matchDate: '2026-11-23', startTime: '19:00', endTime: '22:30', venue: 'M. Chinnaswamy Stadium', status: 'live', channels: ['star-sports-1', 'jiohotstar'], watchLinks: [{ label: 'Star Sports 1', url: 'https://www.hotstar.com/in/sports/cricket' }, { label: 'JioHotstar', url: 'https://www.hotstar.com/in/sports/cricket' }], streamUrls: ['https://www.hotstar.com/in/sports/cricket'], matchUrl: 'https://www.hotstar.com/in/sports/cricket', tags: ['T20I', 'India', 'Australia'], createdAt: 1700000003000, updatedAt: 1700000003000 },
+  { id: 'west-indies-vs-sri-lanka-1st-test', series: 'Sri Lanka tour of West Indies', teamA: 'West Indies', teamB: 'Sri Lanka', matchDate: '2026-11-24', startTime: '10:00', endTime: '17:00', venue: 'Sabina Park', status: 'upcoming', channels: ['willow-tv'], watchLinks: [{ label: 'Willow TV', url: 'https://www.willow.tv' }], streamUrls: ['https://www.willow.tv'], matchUrl: 'https://www.willow.tv', tags: ['Test', 'West Indies', 'Sri Lanka'], createdAt: 1700000004000, updatedAt: 1700000004000 },
+  { id: 'bangladesh-vs-afghanistan-1st-odi', series: 'Afghanistan tour of Bangladesh', teamA: 'Bangladesh', teamB: 'Afghanistan', matchDate: '2026-11-25', startTime: '14:00', endTime: '21:30', venue: 'Shere Bangla National Stadium', status: 'upcoming', channels: ['gazi-tv'], watchLinks: [{ label: 'Gazi TV', url: 'https://www.gtv.com.bd' }], streamUrls: ['https://www.gtv.com.bd'], matchUrl: 'https://www.gtv.com.bd', tags: ['ODI', 'Bangladesh', 'Afghanistan'], createdAt: 1700000005000, updatedAt: 1700000005000 },
 ];
 
-function safeReadJson<T>(key: string, fallback: T): T {
+export function normalizeSeriesName(series: string): string {
+  return series.trim().replace(/\s+/g, ' ');
+}
+
+export function normalizeTeamName(team: string): string {
+  return team.trim().replace(/\s+/g, ' ');
+}
+
+export function normalizeChannelName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
+}
+
+export function localStorageAvailable(): boolean {
+  try {
+    const testKey = '__clsw_test__';
+    window.localStorage.setItem(testKey, '1');
+    window.localStorage.removeItem(testKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readJson<T>(key: string): T | null {
   try {
     const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
+    if (!raw) return null;
     return JSON.parse(raw) as T;
   } catch {
-    return fallback;
-  }
-}
-
-function safeWriteJson<T>(key: string, value: T): void {
-  window.localStorage.setItem(key, JSON.stringify(value));
-}
-
-function notifyDataChanged(): void {
-  window.dispatchEvent(new CustomEvent('clsw:data-changed'));
-}
-
-/**
- * Ensures any previously stored non-authorized admin record is purged,
- * and cleans up any legacy non-English channel tags in localStorage.
- */
-function enforceSingleAdminAndEnglishData(): void {
-  const existingAdmin = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (existingAdmin && existingAdmin.email.trim().toLowerCase() !== AUTHORIZED_ADMIN_EMAIL) {
-    window.localStorage.removeItem(KEYS.ADMIN_AUTH);
-    window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  }
-
-  const existingChannels = safeReadJson<Channel[] | null>(KEYS.CHANNELS, null);
-  if (existingChannels) {
-    let changed = false;
-    const normalized = existingChannels.map((ch) => {
-      if (ch.language.trim().toLowerCase() === 'hindi') {
-        changed = true;
-        return { ...ch, language: 'English' };
-      }
-      return ch;
-    });
-    if (changed) {
-      safeWriteJson(KEYS.CHANNELS, normalized);
-    }
-  }
-}
-
-/**
- * Initializes seed data once on first visit. Channels are permanent.
- */
-export function ensureSeedData(): void {
-  const alreadySeeded = window.localStorage.getItem(KEYS.SEEDED);
-  if (!alreadySeeded) {
-    safeWriteJson(KEYS.CHANNELS, SEED_CHANNELS);
-    safeWriteJson(KEYS.MATCHES, SEED_MATCHES);
-    safeWriteJson(KEYS.EXPIRED_SLUGS, []);
-    window.localStorage.setItem(KEYS.SEEDED, 'true');
-  } else {
-    const existingChannels = safeReadJson<Channel[] | null>(KEYS.CHANNELS, null);
-    if (!existingChannels) {
-      safeWriteJson(KEYS.CHANNELS, SEED_CHANNELS);
-    }
-  }
-  enforceSingleAdminAndEnglishData();
-}
-
-/**
- * Checks all scheduled matches and permanently deletes any match whose endTime + 30 min has passed.
- * Channels are NEVER touched by auto-delete.
- */
-export function purgeExpiredMatches(nowMs: number = Date.now()): { removedCount: number } {
-  ensureSeedData();
-  const matches = safeReadJson<CricketMatch[]>(KEYS.MATCHES, []);
-  const expiredSlugs = safeReadJson<string[]>(KEYS.EXPIRED_SLUGS, []);
-  const expiredSet = new Set(expiredSlugs);
-
-  const active: CricketMatch[] = [];
-  let removedCount = 0;
-
-  for (const match of matches) {
-    if (isMatchExpired(match, nowMs)) {
-      removedCount += 1;
-      expiredSet.add(match.slug);
-    } else {
-      active.push(match);
-    }
-  }
-
-  if (removedCount > 0) {
-    safeWriteJson(KEYS.MATCHES, active);
-    safeWriteJson(KEYS.EXPIRED_SLUGS, Array.from(expiredSet).slice(-200));
-    notifyDataChanged();
-  }
-
-  return { removedCount };
-}
-
-// ============================================================================
-// PUBLIC READ-ONLY API (Enforces Firestore-style read-only intent for viewers)
-// ============================================================================
-
-export function getPublicMatches(): CricketMatch[] {
-  ensureSeedData();
-  const matches = safeReadJson<CricketMatch[]>(KEYS.MATCHES, []);
-  return [...matches].sort((a, b) => {
-    const dateCmp = a.date.localeCompare(b.date);
-    if (dateCmp !== 0) return dateCmp;
-    return a.startTime.localeCompare(b.startTime);
-  });
-}
-
-export function getPublicMatchBySlug(slug: string): CricketMatch | null {
-  const clean = slug.trim().toLowerCase();
-  if (!clean) return null;
-  const matches = getPublicMatches();
-  return matches.find((m) => m.slug.toLowerCase() === clean) ?? null;
-}
-
-export function getPublicChannels(): Channel[] {
-  ensureSeedData();
-  return safeReadJson<Channel[]>(KEYS.CHANNELS, []);
-}
-
-// ============================================================================
-// SINGLE-ADMIN AUTHENTICATION, BRUTE-FORCE LOCKOUT & SESSION MANAGEMENT
-// ============================================================================
-
-export function isAdminConfigured(): boolean {
-  enforceSingleAdminAndEnglishData();
-  const record = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  return Boolean(
-    record &&
-      record.email.trim().toLowerCase() === AUTHORIZED_ADMIN_EMAIL &&
-      record.passwordHash &&
-      record.salt
-  );
-}
-
-export function getLockoutState(nowMs: number = Date.now()): {
-  isLocked: boolean;
-  remainingMs: number;
-  failedAttempts: number;
-} {
-  const state = safeReadJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-    failedAttempts: 0,
-    lockedUntil: null,
-  });
-
-  if (state.lockedUntil && nowMs < state.lockedUntil) {
-    return {
-      isLocked: true,
-      remainingMs: state.lockedUntil - nowMs,
-      failedAttempts: state.failedAttempts,
-    };
-  }
-
-  if (state.lockedUntil && nowMs >= state.lockedUntil) {
-    safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-      failedAttempts: 0,
-      lockedUntil: null,
-    });
-    return { isLocked: false, remainingMs: 0, failedAttempts: 0 };
-  }
-
-  return {
-    isLocked: false,
-    remainingMs: 0,
-    failedAttempts: state.failedAttempts,
-  };
-}
-
-function appendAuditLog(
-  action: AuditAction,
-  targetName: string,
-  adminEmail: string,
-  details?: string
-): void {
-  const entries = safeReadJson<AuditLogEntry[]>(KEYS.AUDIT_LOG, []);
-  const next: AuditLogEntry = {
-    id: generateRandomHex(8),
-    timestamp: new Date().toISOString(),
-    action,
-    targetName,
-    adminEmail,
-    details,
-  };
-  safeWriteJson(KEYS.AUDIT_LOG, [next, ...entries].slice(0, 500));
-}
-
-function saveSession(session: AdminSession | null): void {
-  if (!session) {
-    window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    return;
-  }
-  window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-}
-
-export function getActiveAdminSession(nowMs: number = Date.now()): AdminSession | null {
-  try {
-    enforceSingleAdminAndEnglishData();
-    const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
-    if (!raw) return null;
-    const session = JSON.parse(raw) as AdminSession;
-    const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-
-    if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
-      saveSession(null);
-      return null;
-    }
-
-    if (
-      session.sessionEpoch !== authRecord.sessionEpoch ||
-      session.email !== AUTHORIZED_ADMIN_EMAIL
-    ) {
-      saveSession(null);
-      return null;
-    }
-
-    // Enforce 15-minute inactivity timeout
-    if (nowMs - session.lastActivityAt >= INACTIVITY_TIMEOUT_MS || nowMs >= session.expiresAt) {
-      saveSession(null);
-      appendAuditLog(
-        'AUTO_LOGOUT_INACTIVITY',
-        'Admin Session',
-        authRecord.email,
-        'Session ended after 15 minutes of inactivity'
-      );
-      return null;
-    }
-
-    return session;
-  } catch {
-    saveSession(null);
     return null;
   }
 }
 
-export function touchAdminSession(nowMs: number = Date.now()): AdminSession | null {
-  const session = getActiveAdminSession(nowMs);
-  if (!session) return null;
-  const updated: AdminSession = {
-    ...session,
-    lastActivityAt: nowMs,
-    expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
-  };
-  saveSession(updated);
-  return updated;
+function writeJson(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage may be unavailable; Firestore remains the source of truth.
+  }
 }
 
-/**
- * Strict write-guard: public viewers can NEVER execute any write mutation,
- * and only the single authorized administrator can write.
- */
-function assertAuthorizedAdminSession(providedSession: AdminSession | null): AdminSession {
-  const active = getActiveAdminSession();
-  if (!active || !providedSession || active.email !== AUTHORIZED_ADMIN_EMAIL) {
-    throw new Error('Unauthorized: Authenticated admin session required.');
+function removeKey(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore.
   }
-  if (
-    !constantTimeEqual(active.token, providedSession.token) ||
-    active.sessionEpoch !== providedSession.sessionEpoch
-  ) {
-    throw new Error('Unauthorized: Session invalid or expired. Please sign in again.');
-  }
-  return touchAdminSession() ?? active;
 }
 
-/**
- * First-time admin setup: strictly allows ONLY biswajitcopy3@gmail.com.
- * Refuses every other email and refuses creating a second admin once configured.
- */
-export async function setupFirstAdmin(
-  emailInput: string,
-  password: string,
-  confirmPassword: string
-): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
-  if (isAdminConfigured()) {
-    return { ok: false, error: 'Admin account is already configured.' };
-  }
+// In-memory caches. Sync getters read these (seeded from the local cache on
+// first use); async loaders refresh them from Firestore.
+let matchesCache: CricketMatch[] | null = null;
+let channelsCache: Channel[] | null = null;
+let auditCache: AuditLogEntry[] | null = null;
+let adminConfiguredCache: boolean | null = null;
+let adminEmailCache: string | null = null;
+let firestoreLockoutCache: LockoutState | null = null;
+let authReadyPromise: Promise<User | null> | null = null;
 
-  const emailCheck = validateEmail(emailInput);
-  if (!emailCheck.valid) {
-    return { ok: false, error: emailCheck.error || 'Invalid email.' };
-  }
-
-  if (!constantTimeEqual(emailCheck.value, AUTHORIZED_ADMIN_EMAIL)) {
-    return {
-      ok: false,
-      error: 'Unauthorized email. Admin setup is restricted to the designated administrator account only.',
-    };
-  }
-
-  const pwCheck = validateStrongPassword(password);
-  if (!pwCheck.valid) {
-    return { ok: false, error: pwCheck.errors[0] };
-  }
-
-  if (password !== confirmPassword) {
-    return { ok: false, error: 'Passwords do not match.' };
-  }
-
-  const salt = generateRandomHex(16);
-  const iterations = getDefaultHashIterations();
-  const passwordHash = await hashPasswordSha256(password, salt, iterations);
-  const nowIso = new Date().toISOString();
-
-  const record: AdminAuthRecord = {
-    email: AUTHORIZED_ADMIN_EMAIL,
-    passwordHash,
-    salt,
-    iterations,
-    sessionEpoch: 1,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-
-  safeWriteJson(KEYS.ADMIN_AUTH, record);
-  safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, { failedAttempts: 0, lockedUntil: null });
-
-  const nowMs = Date.now();
-  const session: AdminSession = {
-    token: generateRandomHex(32),
-    email: AUTHORIZED_ADMIN_EMAIL,
-    sessionEpoch: record.sessionEpoch,
-    issuedAt: nowMs,
-    lastActivityAt: nowMs,
-    expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
-  };
-  saveSession(session);
-
-  appendAuditLog('ADMIN_SETUP', 'Admin Account', AUTHORIZED_ADMIN_EMAIL, 'Initial admin credentials configured');
-  return { ok: true, session };
+function getExpiredSlugs(): string[] {
+  const parsed = readJson<string[]>(KEYS.EXPIRED_SLUGS);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
-function recordFailedLoginAttempt(
-  nowMs: number,
-  currentFailedAttempts: number
-): { ok: false; error: string; lockedUntil?: number | null } {
-  const nextFailed = currentFailedAttempts + 1;
-  if (nextFailed >= MAX_FAILED_ATTEMPTS) {
-    const lockedUntil = nowMs + LOCKOUT_DURATION_MS;
-    safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-      failedAttempts: nextFailed,
-      lockedUntil,
-    });
-    return {
-      ok: false,
-      error: 'Login locked for 15 minutes due to 5 failed attempts.',
-      lockedUntil,
-    };
+function seedIfNeeded(): void {
+  try {
+    if (window.localStorage.getItem(KEYS.SEEDED)) return;
+    const expiredSlugs = new Set(getExpiredSlugs());
+    const matches = SEED_MATCHES.filter((m) => !expiredSlugs.has(m.id));
+    writeJson(KEYS.MATCHES, matches);
+    writeJson(KEYS.CHANNELS, SEED_CHANNELS);
+    window.localStorage.setItem(KEYS.SEEDED, '1');
+  } catch {
+    // Ignore storage errors.
   }
+}
 
-  safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, {
-    failedAttempts: nextFailed,
-    lockedUntil: null,
-  });
+function loadMatchesFromStorage(): CricketMatch[] {
+  seedIfNeeded();
+  if (matchesCache) return matchesCache;
+  const stored = readJson<CricketMatch[]>(KEYS.MATCHES);
+  if (Array.isArray(stored) && stored.length > 0) {
+    matchesCache = stored.map(normalizeMatchDates);
+    return matchesCache;
+  }
+  matchesCache = SEED_MATCHES.filter((m) => !new Set(getExpiredSlugs()).has(m.id)).map((m) => ({ ...m }));
+  return matchesCache;
+}
+
+function saveMatchesToStorage(matches: CricketMatch[]): void {
+  matchesCache = matches;
+  writeJson(KEYS.MATCHES, matches);
+}
+
+function loadChannelsFromStorage(): Channel[] {
+  seedIfNeeded();
+  if (channelsCache) return channelsCache;
+  const stored = readJson<Channel[]>(KEYS.CHANNELS);
+  if (Array.isArray(stored) && stored.length > 0) {
+    channelsCache = stored.map(normalizeChannel);
+    return channelsCache;
+  }
+  channelsCache = SEED_CHANNELS.map((c) => ({ ...c }));
+  return channelsCache;
+}
+
+function saveChannelsToStorage(channels: Channel[]): void {
+  channelsCache = channels;
+  writeJson(KEYS.CHANNELS, channels);
+}
+
+export function normalizeMatchDates(match: CricketMatch): CricketMatch {
+  const normalized = { ...match };
+  if (typeof normalized.matchDate === 'string') {
+    const parsed = new Date(normalized.matchDate);
+    if (!Number.isNaN(parsed.getTime())) {
+      normalized.matchDate = parsed.toISOString().slice(0, 10);
+    }
+  }
+  return normalized;
+}
+
+export function normalizeChannel(channel: Channel): Channel {
   return {
-    ok: false,
-    error: 'Login failed. Invalid email or password.',
+    ...channel,
+    name: normalizeChannelName(channel.name || ''),
+    streamUrl: (channel.streamUrl || '').trim(),
   };
+}
+
+export function getLiveMatches(matches: CricketMatch[]): CricketMatch[] {
+  return matches.filter((m) => m.status === 'live');
+}
+
+export function getMatchById(matches: CricketMatch[], id: string): CricketMatch | undefined {
+  return matches.find((m) => m.id === id);
+}
+
+export function getPublicMatches(): CricketMatch[] {
+  return loadMatchesFromStorage().filter((match) => match.status !== 'cancelled');
+}
+
+export function getPublicMatchesLiveFirst(): CricketMatch[] {
+  const all = getPublicMatches();
+  return [...all].sort((a, b) => {
+    if (a.status === 'live' && b.status !== 'live') return -1;
+    if (a.status !== 'live' && b.status === 'live') return 1;
+    return new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime();
+  });
+}
+
+export function getChannelsForMatch(match: CricketMatch): Channel[] {
+  const channels = loadChannelsFromStorage();
+  const ids = new Set(match.channels || []);
+  return channels.filter((c) => ids.has(c.id) && c.isActive);
+}
+
+export function getChannels(): Channel[] {
+  return [...loadChannelsFromStorage()];
+}
+
+export function getChannelById(id: string): Channel | undefined {
+  return loadChannelsFromStorage().find((c) => c.id === id);
+}
+
+export function getVisibleChannels(): Channel[] {
+  return loadChannelsFromStorage().filter((c) => c.isActive);
+}
+
+export function getChannelLogo(channel: Channel): string {
+  return channel.logoUrl || '';
+}
+
+export function sanitizeChannelName(name: string): string {
+  return normalizeChannelName(name);
+}
+
+export function getChannelForMatch(match: CricketMatch): Channel | undefined {
+  return getChannelsForMatch(match)[0];
+}
+
+export function channelHasStreamUrl(channel: Channel): boolean {
+  return Boolean(channel.streamUrl && channel.streamUrl.trim().length > 0);
+}
+
+// ---------- Firestore helpers ----------
+
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => stripUndefined(item)) as T;
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v !== undefined) out[k] = stripUndefined(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+async function firestoreGetMatches(): Promise<CricketMatch[] | null> {
+  try {
+    const snap = await getDocs(collection(getFirestoreDb(), 'matches'));
+    return snap.docs.map((d) => normalizeMatchDates(d.data() as CricketMatch));
+  } catch {
+    return null;
+  }
+}
+
+async function firestoreGetChannels(): Promise<Channel[] | null> {
+  try {
+    const snap = await getDocs(collection(getFirestoreDb(), 'channels'));
+    return snap.docs.map((d) => normalizeChannel(d.data() as Channel));
+  } catch {
+    return null;
+  }
+}
+
+async function seedFirestoreMatches(matches: CricketMatch[]): Promise<void> {
+  try {
+    const db = getFirestoreDb();
+    const batch = writeBatch(db);
+    matches.forEach((m) => batch.set(doc(db, 'matches', m.id), stripUndefined(normalizeMatchDates(m))));
+    await batch.commit();
+  } catch {
+    // Seeding is best-effort; the local cache still serves the page.
+  }
+}
+
+async function seedFirestoreChannels(channels: Channel[]): Promise<void> {
+  try {
+    const db = getFirestoreDb();
+    const batch = writeBatch(db);
+    channels.forEach((c) => batch.set(doc(db, 'channels', c.id), stripUndefined(normalizeChannel(c))));
+    await batch.commit();
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function persistMatchToFirestore(match: CricketMatch): Promise<void> {
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    await setDoc(doc(getFirestoreDb(), 'matches', match.id), stripUndefined(normalizeMatchDates(match)));
+  } catch {
+    // The local cache already holds the change; Firestore sync retries on next load.
+  }
+}
+
+async function deleteFirestoreMatches(ids: string[]): Promise<void> {
+  try {
+    if (!getFirebaseAuth().currentUser || ids.length === 0) return;
+    const db = getFirestoreDb();
+    const batch = writeBatch(db);
+    ids.forEach((id) => batch.delete(doc(db, 'matches', id)));
+    await batch.commit();
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function persistChannelToFirestore(channel: Channel): Promise<void> {
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    await setDoc(doc(getFirestoreDb(), 'channels', channel.id), stripUndefined(normalizeChannel(channel)));
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function deleteFirestoreChannel(id: string): Promise<void> {
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    await deleteDoc(doc(getFirestoreDb(), 'channels', id));
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function persistAuditEntry(entry: AuditLogEntry): Promise<void> {
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    await setDoc(doc(getFirestoreDb(), 'auditLog', entry.id), stripUndefined(entry));
+  } catch {
+    // Best-effort.
+  }
 }
 
 /**
- * Hardened single-admin login:
- * Checks email against AUTHORIZED_ADMIN_EMAIL FIRST before any password verification.
- * Returns a generic login-failed message for any other email or invalid password.
+ * Load matches from Firestore (server-side source of truth). Falls back to
+ * the local cache / seed data when Firestore is unreachable. When the admin
+ * is signed in and Firestore is still empty, the seed data is published to
+ * Firestore once so every browser and device sees the same content.
  */
-export async function loginAdmin(
-  emailInput: string,
-  password: string
-): Promise<
-  | { ok: true; session: AdminSession }
-  | { ok: false; error: string; lockedUntil?: number | null }
-> {
-  const nowMs = Date.now();
-  const lockout = getLockoutState(nowMs);
-  if (lockout.isLocked) {
-    return {
-      ok: false,
-      error: 'Too many failed attempts. Admin login is temporarily locked.',
-      lockedUntil: nowMs + lockout.remainingMs,
-    };
+export async function loadMatches(): Promise<CricketMatch[]> {
+  const fromFirestore = await firestoreGetMatches();
+  if (fromFirestore && fromFirestore.length > 0) {
+    saveMatchesToStorage(fromFirestore.map(normalizeMatchDates));
+    return [...fromFirestore];
   }
-
-  // Step 1: Check email FIRST before any password verification
-  const emailNorm = emailInput.trim().toLowerCase();
-  if (!constantTimeEqual(emailNorm, AUTHORIZED_ADMIN_EMAIL)) {
-    return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
+  if (fromFirestore && fromFirestore.length === 0 && getFirebaseAuth().currentUser) {
+    const local = loadMatchesFromStorage();
+    await seedFirestoreMatches(local);
   }
-
-  const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
-    return { ok: false, error: 'Admin account is not set up yet.' };
-  }
-
-  // Step 2: Verify password hash only for the authorized admin email
-  const candidateHash = await hashPasswordSha256(
-    password,
-    authRecord.salt,
-    authRecord.iterations
-  );
-
-  if (!constantTimeEqual(candidateHash, authRecord.passwordHash)) {
-    return recordFailedLoginAttempt(nowMs, lockout.failedAttempts);
-  }
-
-  // Successful login resets lockout
-  safeWriteJson<LockoutState>(KEYS.ADMIN_LOCKOUT, { failedAttempts: 0, lockedUntil: null });
-  const session: AdminSession = {
-    token: generateRandomHex(32),
-    email: AUTHORIZED_ADMIN_EMAIL,
-    sessionEpoch: authRecord.sessionEpoch,
-    issuedAt: nowMs,
-    lastActivityAt: nowMs,
-    expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
-  };
-  saveSession(session);
-  appendAuditLog('ADMIN_LOGIN', 'Admin Panel', AUTHORIZED_ADMIN_EMAIL);
-  return { ok: true, session };
+  return [...loadMatchesFromStorage()];
 }
 
-export function logoutAdmin(session: AdminSession | null): void {
-  const email = session?.email ?? safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null)?.email;
-  if (email) {
-    appendAuditLog('ADMIN_LOGOUT', 'Admin Session', email);
+export async function loadChannels(): Promise<Channel[]> {
+  const fromFirestore = await firestoreGetChannels();
+  if (fromFirestore && fromFirestore.length > 0) {
+    saveChannelsToStorage(fromFirestore.map(normalizeChannel));
+    return [...fromFirestore];
   }
-  saveSession(null);
+  if (fromFirestore && fromFirestore.length === 0 && getFirebaseAuth().currentUser) {
+    const local = loadChannelsFromStorage();
+    await seedFirestoreChannels(local);
+  }
+  return [...loadChannelsFromStorage()];
 }
+
+export async function saveMatches(matches: CricketMatch[]): Promise<void> {
+  const normalized = matches.map(normalizeMatchDates);
+  saveMatchesToStorage(normalized);
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    const db = getFirestoreDb();
+    const existing = await getDocs(collection(db, 'matches'));
+    const batch = writeBatch(db);
+    const wanted = new Set(normalized.map((m) => m.id));
+    existing.docs.forEach((d) => {
+      if (!wanted.has(d.id)) batch.delete(d.ref);
+    });
+    normalized.forEach((m) => batch.set(doc(db, 'matches', m.id), stripUndefined(normalizeMatchDates(m))));
+    await batch.commit();
+  } catch {
+    // Best-effort.
+  }
+}
+
+export async function saveChannels(channels: Channel[]): Promise<void> {
+  const normalized = channels.map(normalizeChannel);
+  saveChannelsToStorage(normalized);
+  try {
+    if (!getFirebaseAuth().currentUser) return;
+    const db = getFirestoreDb();
+    const existing = await getDocs(collection(db, 'channels'));
+    const batch = writeBatch(db);
+    const wanted = new Set(normalized.map((c) => c.id));
+    existing.docs.forEach((d) => {
+      if (!wanted.has(d.id)) batch.delete(d.ref);
+    });
+    normalized.forEach((c) => batch.set(doc(db, 'channels', c.id), stripUndefined(normalizeChannel(c))));
+    await batch.commit();
+  } catch {
+    // Best-effort.
+  }
+}
+
+export function mergeChannelList(existing: Channel[], incoming: Channel[]): Channel[] {
+  const map = new Map(existing.map((c) => [c.id, c]));
+  incoming.forEach((c) => {
+    if (!map.has(c.id)) map.set(c.id, normalizeChannel(c));
+  });
+  return Array.from(map.values());
+}
+
+export function mergeMatchList(existing: CricketMatch[], incoming: CricketMatch[]): CricketMatch[] {
+  const map = new Map(existing.map((m) => [m.id, m]));
+  incoming.forEach((m) => {
+    if (!map.has(m.id)) map.set(m.id, normalizeMatchDates(m));
+  });
+  return Array.from(map.values());
+}
+
+export function seedMatchesIfNeeded(): CricketMatch[] {
+  return [...loadMatchesFromStorage()];
+}
+
+export function seedChannelsIfNeeded(): Channel[] {
+  return [...loadChannelsFromStorage()];
+}
+
+// ---------- Admin configuration (Firestore is the source of truth) ----------
 
 /**
- * Invalidates every open admin session across all tabs by advancing sessionEpoch.
+ * Ask Firestore whether an admin account exists. This is the ONLY place
+ * that decides setup vs login, so clearing browser data can never bring
+ * the setup screen back once an admin exists.
  */
-export function logoutAllAdminSessions(session: AdminSession | null): void {
-  const verified = assertAuthorizedAdminSession(session);
-  const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (authRecord && authRecord.email === AUTHORIZED_ADMIN_EMAIL) {
-    const updated: AdminAuthRecord = {
-      ...authRecord,
-      sessionEpoch: authRecord.sessionEpoch + 1,
-      updatedAt: new Date().toISOString(),
+export async function fetchAdminConfigured(): Promise<boolean> {
+  try {
+    const snap = await getDoc(doc(getFirestoreDb(), 'admin', 'config'));
+    adminConfiguredCache = snap.exists();
+    if (snap.exists()) {
+      const data = snap.data();
+      if (typeof data.email === 'string') adminEmailCache = data.email;
+    }
+    return adminConfiguredCache;
+  } catch {
+    return adminConfiguredCache ?? false;
+  }
+}
+
+/** Sync check of the last known Firestore admin state. Never reads localStorage. */
+export function isAdminConfigured(): boolean {
+  return adminConfiguredCache === true;
+}
+
+export function getAdminEmail(): string | null {
+  if (adminEmailCache) return adminEmailCache;
+  const user = getFirebaseAuth().currentUser;
+  if (user?.email) {
+    adminEmailCache = user.email;
+    return adminEmailCache;
+  }
+  return null;
+}
+
+/** Resolves once Firebase Auth has restored (or found no) signed-in user. */
+export function waitForFirebaseAuthReady(): Promise<User | null> {
+  if (!authReadyPromise) {
+    authReadyPromise = new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(getFirebaseAuth(), (user) => {
+        unsubscribe();
+        resolve(user);
+      });
+    });
+  }
+  return authReadyPromise;
+}
+
+async function ensureAdminConfigDoc(uid: string): Promise<void> {
+  try {
+    const ref = doc(getFirestoreDb(), 'admin', 'config');
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, { email: ADMIN_EMAIL, uid, createdAt: Date.now() });
+    }
+    adminConfiguredCache = true;
+    adminEmailCache = ADMIN_EMAIL;
+  } catch {
+    // The login itself already succeeded; the config doc heals on next login.
+  }
+}
+
+// ---------- Lockout (5 failed attempts -> 15 minute lock) ----------
+
+function saveLockoutState(state: LockoutState): void {
+  writeJson(KEYS.ADMIN_LOCKOUT, state);
+}
+
+export function getLockoutState(): LockoutState {
+  const local = readJson<LockoutState>(KEYS.ADMIN_LOCKOUT);
+  const localState: LockoutState = {
+    failedAttempts: local?.failedAttempts || 0,
+    lockedUntil: local?.lockedUntil || null,
+  };
+  if (localState.lockedUntil && localState.lockedUntil <= Date.now()) {
+    return { failedAttempts: 0, lockedUntil: null };
+  }
+  const remote = firestoreLockoutCache;
+  if (!remote) return localState;
+  if (remote.lockedUntil && remote.lockedUntil <= Date.now()) return localState;
+  return {
+    failedAttempts: Math.max(localState.failedAttempts, remote.failedAttempts),
+    lockedUntil: Math.max(localState.lockedUntil || 0, remote.lockedUntil || 0) || null,
+  };
+}
+
+export function getFailedAttemptsCount(): number {
+  return getLockoutState().failedAttempts;
+}
+
+function recordFailedLoginAttempt(): LockoutState {
+  const current = getLockoutState();
+  const failedAttempts = current.failedAttempts + 1;
+  const lockedUntil = failedAttempts >= LOCKOUT_THRESHOLD ? Date.now() + LOCKOUT_DURATION_MS : null;
+  const next: LockoutState = { failedAttempts, lockedUntil };
+  saveLockoutState(next);
+  return next;
+}
+
+function resetLockoutState(): void {
+  removeKey(KEYS.ADMIN_LOCKOUT);
+}
+
+async function mirrorLockoutToFirestore(state: LockoutState): Promise<void> {
+  try {
+    await setDoc(doc(getFirestoreDb(), 'security', 'lockout'), { failedAttempts: state.failedAttempts, lockedUntil: state.lockedUntil, lastFailedAt: Date.now() }, { merge: true });
+  } catch {
+    // Best-effort; the local lockout still applies in this browser.
+  }
+}
+
+async function clearFirestoreLockout(): Promise<void> {
+  try {
+    await deleteDoc(doc(getFirestoreDb(), 'security', 'lockout'));
+  } catch {
+    // Best-effort.
+  }
+}
+
+export async function fetchLockoutState(): Promise<LockoutState> {
+  try {
+    const snap = await getDoc(doc(getFirestoreDb(), 'security', 'lockout'));
+    if (snap.exists()) {
+      const d = snap.data();
+      firestoreLockoutCache = {
+        failedAttempts: typeof d.failedAttempts === 'number' ? d.failedAttempts : 0,
+        lockedUntil: typeof d.lockedUntil === 'number' ? d.lockedUntil : null,
+      };
+    }
+  } catch {
+    // Keep the local lockout state.
+  }
+  return getLockoutState();
+}
+
+// ---------- Admin session (15-minute inactivity timeout) ----------
+
+function readLocalSession(): AdminSession | null {
+  const session = readJson<AdminSession>(SESSION_STORAGE_KEY);
+  if (!session) return null;
+  if (Date.now() - session.lastActivityAt > SESSION_TIMEOUT_MS) {
+    removeKey(SESSION_STORAGE_KEY);
+    return null;
+  }
+  return session;
+}
+
+export function getActiveAdminSession(): AdminSession | null {
+  const session = readLocalSession();
+  if (!session) return null;
+  // The session is only valid while Firebase Auth still has the admin signed in.
+  const user = getFirebaseAuth().currentUser;
+  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) return null;
+  return session;
+}
+
+export function touchAdminSession(): void {
+  const session = readLocalSession();
+  if (!session) return;
+  session.lastActivityAt = Date.now();
+  writeJson(SESSION_STORAGE_KEY, session);
+}
+
+function createLocalSession(email: string): AdminSession {
+  const session: AdminSession = { email, createdAt: Date.now(), lastActivityAt: Date.now() };
+  writeJson(SESSION_STORAGE_KEY, session);
+  return session;
+}
+
+export function getAdminSessions(): AdminSession[] {
+  const session = getActiveAdminSession();
+  return session ? [session] : [];
+}
+
+export function adminLogout(): void {
+  const email = getAdminEmail();
+  if (email) addAuditEntry('logout', 'Administrator signed out.', email);
+  removeKey(SESSION_STORAGE_KEY);
+  void signOut(getFirebaseAuth());
+}
+
+// ---------- Admin auth (Firebase Auth, server-side) ----------
+
+export async function setupFirstAdmin(email: string, password: string): Promise<{ ok: boolean; error?: string; message?: string }> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (normalizedEmail !== ADMIN_EMAIL) {
+    return { ok: false, error: 'Only biswajitcopy3@gmail.com can be the administrator.' };
+  }
+  if (!validateEmail(normalizedEmail)) {
+    return { ok: false, error: 'Enter a valid email address.' };
+  }
+  const passwordValidation = validateStrongPassword(password);
+  if (!passwordValidation.ok) {
+    return { ok: false, error: passwordValidation.error || 'Password is not strong enough.' };
+  }
+  const configured = await fetchAdminConfigured();
+  if (configured) {
+    return { ok: false, error: 'An administrator account already exists. Use the login form.' };
+  }
+  try {
+    const credential = await createUserWithEmailAndPassword(getFirebaseAuth(), normalizedEmail, password);
+    await setDoc(doc(getFirestoreDb(), 'admin', 'config'), { email: normalizedEmail, uid: credential.user.uid, createdAt: Date.now() });
+    adminConfiguredCache = true;
+    adminEmailCache = normalizedEmail;
+    createLocalSession(normalizedEmail);
+    addAuditEntry('setup', 'Administrator account created in Firebase Auth + Firestore.', normalizedEmail);
+    return { ok: true, message: 'Administrator account created. Sign in with your email and password.' };
+  } catch (error) {
+    const code = (error as { code?: string }).code || '';
+    if (code === 'auth/email-already-in-use') {
+      return { ok: false, error: 'An administrator account already exists. Use the login form.' };
+    }
+    if (code === 'auth/weak-password') {
+      return { ok: false, error: 'Password is too weak. Use at least 12 characters with upper and lower case letters, a number and a symbol.' };
+    }
+    return { ok: false, error: 'Could not create the administrator account. Please try again.' };
+  }
+}
+
+export async function loginAdmin(email: string, password: string): Promise<{ ok: boolean; error?: string; lockoutUntil?: number; session?: AdminSession; message?: string }> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const lockout = getLockoutState();
+  if (lockout.lockedUntil && lockout.lockedUntil > Date.now()) {
+    const minutes = Math.ceil((lockout.lockedUntil - Date.now()) / 60000);
+    return { ok: false, error: `Too many failed attempts. Try again in ${minutes} minute(s).`, lockoutUntil: lockout.lockedUntil };
+  }
+  if (normalizedEmail !== ADMIN_EMAIL) {
+    const state = recordFailedLoginAttempt();
+    await mirrorLockoutToFirestore(state);
+    return { ok: false, error: 'Invalid email or password.' };
+  }
+  try {
+    const credential = await signInWithEmailAndPassword(getFirebaseAuth(), normalizedEmail, password);
+    if (credential.user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      await signOut(getFirebaseAuth());
+      return { ok: false, error: 'Invalid email or password.' };
+    }
+    resetLockoutState();
+    await clearFirestoreLockout();
+    await ensureAdminConfigDoc(credential.user.uid);
+    const session = createLocalSession(normalizedEmail);
+    addAuditEntry('login', 'Administrator signed in.', normalizedEmail);
+    return { ok: true, session, message: 'Signed in.' };
+  } catch (error) {
+    const code = (error as { code?: string }).code || '';
+    const state = recordFailedLoginAttempt();
+    await mirrorLockoutToFirestore(state);
+    if (state.lockedUntil && state.lockedUntil > Date.now()) {
+      return { ok: false, error: 'Too many failed attempts. Account locked for 15 minutes.', lockoutUntil: state.lockedUntil };
+    }
+    if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential' || code === 'auth/invalid-email') {
+      return { ok: false, error: 'Invalid email or password.' };
+    }
+    return { ok: false, error: 'Could not sign in. Please try again.' };
+  }
+}
+
+export async function adminChangePassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
+  const session = getActiveAdminSession();
+  if (!session) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
+  }
+  const strength = validateStrongPassword(newPassword);
+  if (!strength.ok) {
+    return { ok: false, error: strength.error || 'Password is not strong enough.' };
+  }
+  const user = getFirebaseAuth().currentUser;
+  if (!user || !user.email) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
+  }
+  try {
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+    await updatePassword(user, newPassword);
+    addAuditEntry('password_change', 'Administrator password changed.', user.email);
+    return { ok: true };
+  } catch (error) {
+    const code = (error as { code?: string }).code || '';
+    if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+      return { ok: false, error: 'Current password is incorrect.' };
+    }
+    if (code === 'auth/requires-recent-login') {
+      return { ok: false, error: 'For security, sign in again and then change the password.' };
+    }
+    return { ok: false, error: 'Could not change the password. Please try again.' };
+  }
+}
+
+export function requireAdminSession(): boolean {
+  return getActiveAdminSession() !== null;
+}
+
+// ---------- Audit log (Firestore, admin only) ----------
+
+export function addAuditEntry(action: AuditAction, details: string, adminEmail?: string): AuditLogEntry {
+  const entry: AuditLogEntry = {
+    id: `audit_${Date.now()}_${generateRandomHex(8)}`,
+    timestamp: Date.now(),
+    action,
+    details,
+    adminEmail: adminEmail || getAdminEmail() || 'unknown',
+  };
+  const log = getAuditLog();
+  log.unshift(entry);
+  auditCache = log.slice(0, MAX_AUDIT_ENTRIES);
+  writeJson(KEYS.AUDIT_LOG, auditCache);
+  void persistAuditEntry(entry);
+  return entry;
+}
+
+export function getAuditLog(): AuditLogEntry[] {
+  if (auditCache) return [...auditCache];
+  const stored = readJson<AuditLogEntry[]>(KEYS.AUDIT_LOG);
+  auditCache = Array.isArray(stored) ? stored : [];
+  return [...auditCache];
+}
+
+export function adminGetAuditLog(): AuditLogEntry[] {
+  return getAuditLog();
+}
+
+export async function fetchAuditLog(): Promise<AuditLogEntry[]> {
+  try {
+    if (!getFirebaseAuth().currentUser) return getAuditLog();
+    const snap = await getDocs(collection(getFirestoreDb(), 'auditLog'));
+    const entries = (snap.docs.map((d) => d.data() as AuditLogEntry)).sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_AUDIT_ENTRIES);
+    if (entries.length > 0) {
+      auditCache = entries;
+      writeJson(KEYS.AUDIT_LOG, entries);
+    }
+    return [...(auditCache || [])];
+  } catch {
+    return getAuditLog();
+  }
+}
+
+// ---------- Export / import / reset ----------
+
+export function adminExportData(): { ok: boolean; data?: string; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
+  }
+  try {
+    const payload = {
+      version: storageVersion,
+      exportedAt: new Date().toISOString(),
+      matches: loadMatchesFromStorage(),
+      channels: loadChannelsFromStorage(),
+      auditLog: getAuditLog(),
     };
-    safeWriteJson(KEYS.ADMIN_AUTH, updated);
-    appendAuditLog(
-      'LOGOUT_ALL_SESSIONS',
-      'All Active Sessions',
-      verified.email,
-      'Revoked all sessions across browser tabs'
-    );
+    return { ok: true, data: JSON.stringify(payload, null, 2) };
+  } catch {
+    return { ok: false, error: 'Could not export data.' };
   }
-  saveSession(null);
-  notifyDataChanged();
 }
 
-export async function adminChangePassword(
-  session: AdminSession | null,
-  currentPassword: string,
-  newPassword: string,
-  confirmNewPassword: string
-): Promise<{ ok: true; session: AdminSession } | { ok: false; error: string }> {
-  const verified = assertAuthorizedAdminSession(session);
-  const authRecord = safeReadJson<AdminAuthRecord | null>(KEYS.ADMIN_AUTH, null);
-  if (!authRecord || authRecord.email !== AUTHORIZED_ADMIN_EMAIL) {
-    return { ok: false, error: 'Admin account not found.' };
+export async function adminImportData(json: string): Promise<{ ok: boolean; importedMatches: number; importedChannels: number; error?: string }> {
+  if (!requireAdminSession()) {
+    return { ok: false, importedMatches: 0, importedChannels: 0, error: 'Admin session expired. Sign in again.' };
   }
-
-  const currentHash = await hashPasswordSha256(
-    currentPassword,
-    authRecord.salt,
-    authRecord.iterations
-  );
-  if (!constantTimeEqual(currentHash, authRecord.passwordHash)) {
-    return { ok: false, error: 'Current password is incorrect.' };
+  try {
+    const parsed = JSON.parse(json) as { matches?: unknown; channels?: unknown };
+    const importedMatches = Array.isArray(parsed.matches) ? (parsed.matches as CricketMatch[]).map(normalizeMatchDates) : [];
+    const importedChannels = Array.isArray(parsed.channels) ? (parsed.channels as Channel[]).map(normalizeChannel) : [];
+    if (importedMatches.length === 0 && importedChannels.length === 0) {
+      return { ok: false, importedMatches: 0, importedChannels: 0, error: 'No matches or channels found in the file.' };
+    }
+    if (importedMatches.length > 0) await saveMatches(importedMatches);
+    if (importedChannels.length > 0) await saveChannels(importedChannels);
+    addAuditEntry('data_import', `Imported ${importedMatches.length} matches and ${importedChannels.length} channels.`);
+    return { ok: true, importedMatches: importedMatches.length, importedChannels: importedChannels.length };
+  } catch {
+    return { ok: false, importedMatches: 0, importedChannels: 0, error: 'The file is not valid JSON data.' };
   }
-
-  const pwCheck = validateStrongPassword(newPassword);
-  if (!pwCheck.valid) {
-    return { ok: false, error: pwCheck.errors[0] };
-  }
-
-  if (newPassword !== confirmNewPassword) {
-    return { ok: false, error: 'New passwords do not match.' };
-  }
-
-  if (currentPassword === newPassword) {
-    return { ok: false, error: 'New password must be different from your current password.' };
-  }
-
-  const newSalt = generateRandomHex(16);
-  const iterations = getDefaultHashIterations();
-  const newHash = await hashPasswordSha256(newPassword, newSalt, iterations);
-  const nextEpoch = authRecord.sessionEpoch + 1;
-
-  const updatedRecord: AdminAuthRecord = {
-    ...authRecord,
-    passwordHash: newHash,
-    salt: newSalt,
-    iterations,
-    sessionEpoch: nextEpoch,
-    updatedAt: new Date().toISOString(),
-  };
-  safeWriteJson(KEYS.ADMIN_AUTH, updatedRecord);
-
-  const nowMs = Date.now();
-  const nextSession: AdminSession = {
-    token: generateRandomHex(32),
-    email: AUTHORIZED_ADMIN_EMAIL,
-    sessionEpoch: nextEpoch,
-    issuedAt: nowMs,
-    lastActivityAt: nowMs,
-    expiresAt: nowMs + INACTIVITY_TIMEOUT_MS,
-  };
-  saveSession(nextSession);
-
-  appendAuditLog(
-    'PASSWORD_CHANGED',
-    'Admin Account',
-    verified.email,
-    'Password rotated and older sessions invalidated'
-  );
-  notifyDataChanged();
-  return { ok: true, session: nextSession };
 }
 
-export function adminGetAuditLog(session: AdminSession | null): AuditLogEntry[] {
-  assertAuthorizedAdminSession(session);
-  return safeReadJson<AuditLogEntry[]>(KEYS.AUDIT_LOG, []);
+export async function adminResetAllData(): Promise<{ ok: boolean; error?: string }> {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
+  }
+  try {
+    const db = getFirestoreDb();
+    const [matchSnap, channelSnap, auditSnap] = await Promise.all([
+      getDocs(collection(db, 'matches')),
+      getDocs(collection(db, 'channels')),
+      getDocs(collection(db, 'auditLog')),
+    ]);
+    const batch = writeBatch(db);
+    matchSnap.docs.forEach((d) => batch.delete(d.ref));
+    channelSnap.docs.forEach((d) => batch.delete(d.ref));
+    auditSnap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  } catch {
+    // Continue with the local reset even if Firestore is unreachable.
+  }
+  matchesCache = null;
+  channelsCache = null;
+  auditCache = [];
+  removeKey(KEYS.MATCHES);
+  removeKey(KEYS.CHANNELS);
+  removeKey(KEYS.AUDIT_LOG);
+  removeKey(KEYS.SEEDED);
+  removeKey(KEYS.EXPIRED_SLUGS);
+  seedIfNeeded();
+  addAuditEntry('data_reset', 'All data was reset to the default schedule.');
+  return { ok: true };
 }
 
-// ============================================================================
-// ADMIN-ONLY WRITE OPERATIONS (Matches & Channels)
-// ============================================================================
+// ---------- Admin match / channel management ----------
 
-export interface MatchInput {
+type MatchInput = {
+  series: string;
   teamA: string;
   teamB: string;
-  tournament: string;
-  matchNumber: string;
-  venue: string;
-  date: string;
+  teamAFlag?: string;
+  teamBFlag?: string;
+  matchDate: string;
   startTime: string;
-  endTime: string;
-  status: MatchStatus;
-  channelIds: string[];
+  endTime?: string;
+  venue?: string;
+  status?: MatchStatus;
+  channels?: string[];
+  watchLinks?: WatchLink[];
+  streamUrls?: string[];
+  matchUrl?: string;
+  tags?: string[];
+};
+
+function validateMatchInput(data: MatchInput): string | null {
+  const seriesCheck = validateSafeText(data.series, 120);
+  if (!seriesCheck.ok) return seriesCheck.error || 'Invalid series name.';
+  const teamACheck = validateSafeText(data.teamA, 80);
+  if (!teamACheck.ok) return teamACheck.error || 'Invalid team name.';
+  const teamBCheck = validateSafeText(data.teamB, 80);
+  if (!teamBCheck.ok) return teamBCheck.error || 'Invalid team name.';
+  if (data.venue) {
+    const venueCheck = validateSafeText(data.venue, 120);
+    if (!venueCheck.ok) return venueCheck.error || 'Invalid venue.';
+  }
+  if (!data.matchDate || Number.isNaN(new Date(data.matchDate).getTime())) return 'Enter a valid match date.';
+  if (!data.startTime) return 'Enter a start time.';
+  for (const url of data.streamUrls || []) {
+    const urlCheck = validateStreamUrl(url);
+    if (!urlCheck.ok) return urlCheck.error || 'Invalid stream URL.';
+  }
+  if (data.matchUrl) {
+    const urlCheck = validateStreamUrl(data.matchUrl);
+    if (!urlCheck.ok) return urlCheck.error || 'Invalid match URL.';
+  }
+  return null;
 }
 
-function validateMatchInput(input: MatchInput): { ok: true; data: MatchInput } | { ok: false; error: string } {
-  const teamA = validateSafeText(input.teamA, 'Team A', { required: true, maxLength: 60 });
-  if (!teamA.valid) return { ok: false, error: teamA.error! };
-
-  const teamB = validateSafeText(input.teamB, 'Team B', { required: true, maxLength: 60 });
-  if (!teamB.valid) return { ok: false, error: teamB.error! };
-
-  const tournament = validateSafeText(input.tournament, 'Tournament', {
-    required: true,
-    maxLength: 120,
-  });
-  if (!tournament.valid) return { ok: false, error: tournament.error! };
-
-  const matchNumber = validateSafeText(input.matchNumber, 'Match label', {
-    required: false,
-    maxLength: 40,
-  });
-  if (!matchNumber.valid) return { ok: false, error: matchNumber.error! };
-
-  const venue = validateSafeText(input.venue, 'Venue', { required: true, maxLength: 140 });
-  if (!venue.valid) return { ok: false, error: venue.error! };
-
-  const normalizedStart = input.startTime.trim().slice(0, 5);
-  const normalizedEnd = input.endTime.trim().slice(0, 5);
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date.trim())) {
-    return { ok: false, error: 'Select a valid match date.' };
+export function adminCreateMatch(data: MatchInput): { ok: boolean; match?: CricketMatch; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
   }
-  if (!/^\d{2}:\d{2}$/.test(normalizedStart)) {
-    return { ok: false, error: 'Select a valid start time (IST).' };
+  const validationError = validateMatchInput(data);
+  if (validationError) return { ok: false, error: validationError };
+  const matches = loadMatchesFromStorage();
+  const baseId = generateCleanSlug(`${data.teamA}-vs-${data.teamB}-${data.matchDate}`) || `match-${Date.now()}`;
+  let id = baseId;
+  let counter = 2;
+  while (matches.some((m) => m.id === id)) {
+    id = `${baseId}-${counter}`;
+    counter += 1;
   }
-  if (!/^\d{2}:\d{2}$/.test(normalizedEnd)) {
-    return { ok: false, error: 'Select a valid end time (IST).' };
-  }
-
-  const allowedStatuses: MatchStatus[] = ['Upcoming', 'LIVE', 'Finished'];
-  if (!allowedStatuses.includes(input.status)) {
-    return { ok: false, error: 'Invalid match status.' };
-  }
-
-  const knownChannelIds = new Set(getPublicChannels().map((c) => c.id));
-  const cleanChannelIds = Array.from(
-    new Set((input.channelIds || []).filter((id) => knownChannelIds.has(id)))
-  );
-
-  return {
-    ok: true,
-    data: {
-      teamA: teamA.value,
-      teamB: teamB.value,
-      tournament: tournament.value,
-      matchNumber: matchNumber.value,
-      venue: venue.value,
-      date: input.date.trim(),
-      startTime: normalizedStart,
-      endTime: normalizedEnd,
-      status: input.status,
-      channelIds: cleanChannelIds,
-    },
-  };
-}
-
-export function adminCreateMatch(
-  session: AdminSession | null,
-  input: MatchInput
-): { ok: true; match: CricketMatch } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const validated = validateMatchInput(input);
-  if (!validated.ok) return validated;
-
-  const existing = getPublicMatches();
-  const slug = generateCleanSlug(
-    validated.data.teamA,
-    validated.data.teamB,
-    existing.map((m) => m.slug)
-  );
-  const nowIso = new Date().toISOString();
-
+  const now = Date.now();
   const match: CricketMatch = {
-    id: `m-${generateRandomHex(6)}`,
-    slug,
-    ...validated.data,
-    createdAt: nowIso,
-    updatedAt: nowIso,
+    id,
+    series: normalizeSeriesName(data.series),
+    teamA: normalizeTeamName(data.teamA),
+    teamB: normalizeTeamName(data.teamB),
+    teamAFlag: data.teamAFlag,
+    teamBFlag: data.teamBFlag,
+    matchDate: data.matchDate,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    venue: data.venue,
+    status: data.status || 'upcoming',
+    channels: data.channels || [],
+    watchLinks: data.watchLinks || [],
+    streamUrls: data.streamUrls || [],
+    matchUrl: data.matchUrl,
+    tags: data.tags || [],
+    createdAt: now,
+    updatedAt: now,
   };
-
-  safeWriteJson(KEYS.MATCHES, [...existing, match]);
-  appendAuditLog(
-    'MATCH_CREATED',
-    `${match.teamA} vs ${match.teamB}`,
-    verified.email,
-    `Slug: /match/${match.slug}`
-  );
-  notifyDataChanged();
+  const next = [...matches, normalizeMatchDates(match)];
+  saveMatchesToStorage(next);
+  void persistMatchToFirestore(match);
+  addAuditEntry('match_create', `Created match ${match.teamA} vs ${match.teamB} (${match.matchDate}).`);
   return { ok: true, match };
 }
 
-export function adminUpdateMatch(
-  session: AdminSession | null,
-  matchId: string,
-  input: MatchInput
-): { ok: true; match: CricketMatch } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const validated = validateMatchInput(input);
-  if (!validated.ok) return validated;
-
-  const existing = getPublicMatches();
-  const idx = existing.findIndex((m) => m.id === matchId);
-  if (idx === -1) {
-    return { ok: false, error: 'Match not found.' };
+export function adminUpdateMatch(id: string, data: Partial<MatchInput>): { ok: boolean; match?: CricketMatch; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
   }
-
-  const target = existing[idx];
-  const teamsChanged =
-    target.teamA !== validated.data.teamA || target.teamB !== validated.data.teamB;
-  const otherSlugs = existing.filter((m) => m.id !== matchId).map((m) => m.slug);
-  const slug = teamsChanged
-    ? generateCleanSlug(validated.data.teamA, validated.data.teamB, otherSlugs)
-    : target.slug;
-
-  const updated: CricketMatch = {
-    ...target,
-    ...validated.data,
-    slug,
-    updatedAt: new Date().toISOString(),
+  const matches = loadMatchesFromStorage();
+  const index = matches.findIndex((m) => m.id === id);
+  if (index === -1) return { ok: false, error: 'Match not found.' };
+  const merged: MatchInput = {
+    series: data.series ?? matches[index].series,
+    teamA: data.teamA ?? matches[index].teamA,
+    teamB: data.teamB ?? matches[index].teamB,
+    teamAFlag: data.teamAFlag ?? matches[index].teamAFlag,
+    teamBFlag: data.teamBFlag ?? matches[index].teamBFlag,
+    matchDate: data.matchDate ?? matches[index].matchDate,
+    startTime: data.startTime ?? matches[index].startTime,
+    endTime: data.endTime ?? matches[index].endTime,
+    venue: data.venue ?? matches[index].venue,
+    status: data.status ?? matches[index].status,
+    channels: data.channels ?? matches[index].channels,
+    watchLinks: data.watchLinks ?? matches[index].watchLinks,
+    streamUrls: data.streamUrls ?? matches[index].streamUrls,
+    matchUrl: data.matchUrl ?? matches[index].matchUrl,
+    tags: data.tags ?? matches[index].tags,
   };
-
-  const nextList = [...existing];
-  nextList[idx] = updated;
-  safeWriteJson(KEYS.MATCHES, nextList);
-
-  appendAuditLog(
-    'MATCH_UPDATED',
-    `${updated.teamA} vs ${updated.teamB}`,
-    verified.email,
-    `Status: ${updated.status}`
-  );
-  notifyDataChanged();
+  const validationError = validateMatchInput(merged);
+  if (validationError) return { ok: false, error: validationError };
+  const updated: CricketMatch = {
+    ...matches[index],
+    series: normalizeSeriesName(merged.series),
+    teamA: normalizeTeamName(merged.teamA),
+    teamB: normalizeTeamName(merged.teamB),
+    teamAFlag: merged.teamAFlag,
+    teamBFlag: merged.teamBFlag,
+    matchDate: merged.matchDate,
+    startTime: merged.startTime,
+    endTime: merged.endTime,
+    venue: merged.venue,
+    status: merged.status,
+    channels: merged.channels || [],
+    watchLinks: merged.watchLinks || [],
+    streamUrls: merged.streamUrls || [],
+    matchUrl: merged.matchUrl,
+    tags: merged.tags || [],
+    updatedAt: Date.now(),
+  };
+  const next = [...matches];
+  next[index] = normalizeMatchDates(updated);
+  saveMatchesToStorage(next);
+  void persistMatchToFirestore(updated);
+  addAuditEntry('match_update', `Updated match ${updated.teamA} vs ${updated.teamB} (${updated.matchDate}).`);
   return { ok: true, match: updated };
 }
 
-export function adminDeleteMatch(
-  session: AdminSession | null,
-  matchId: string
-): { ok: true } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const existing = getPublicMatches();
-  const target = existing.find((m) => m.id === matchId);
-  if (!target) {
-    return { ok: false, error: 'Match not found.' };
+export function adminDeleteMatch(id: string): { ok: boolean; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
   }
-
-  safeWriteJson(
-    KEYS.MATCHES,
-    existing.filter((m) => m.id !== matchId)
-  );
-  appendAuditLog('MATCH_DELETED', `${target.teamA} vs ${target.teamB}`, verified.email);
-  notifyDataChanged();
+  const matches = loadMatchesFromStorage();
+  const target = matches.find((m) => m.id === id);
+  if (!target) return { ok: false, error: 'Match not found.' };
+  saveMatchesToStorage(matches.filter((m) => m.id !== id));
+  void deleteFirestoreMatches([id]);
+  addAuditEntry('match_delete', `Deleted match ${target.teamA} vs ${target.teamB} (${target.matchDate}).`);
   return { ok: true };
 }
 
-export interface ChannelInput {
+type ChannelInput = {
   name: string;
-  language: string;
-  streamUrl: string;
+  description?: string;
+  logoUrl?: string;
+  streamUrl?: string;
+  country?: string;
+  language?: string;
+  isActive?: boolean;
+};
+
+function validateChannelInput(data: ChannelInput): string | null {
+  const nameCheck = validateSafeText(data.name, 80);
+  if (!nameCheck.ok) return nameCheck.error || 'Invalid channel name.';
+  if (data.description) {
+    const descCheck = validateSafeText(data.description, 200);
+    if (!descCheck.ok) return descCheck.error || 'Invalid channel description.';
+  }
+  if (data.streamUrl) {
+    const urlCheck = validateStreamUrl(data.streamUrl);
+    if (!urlCheck.ok) return urlCheck.error || 'Invalid stream URL.';
+  }
+  if (data.logoUrl) {
+    const urlCheck = validateStreamUrl(data.logoUrl);
+    if (!urlCheck.ok) return urlCheck.error || 'Invalid logo URL.';
+  }
+  return null;
 }
 
-function validateChannelInput(
-  input: ChannelInput
-): { ok: true; data: ChannelInput } | { ok: false; error: string } {
-  const name = validateSafeText(input.name, 'Channel name', { required: true, maxLength: 80 });
-  if (!name.valid) return { ok: false, error: name.error! };
-
-  const language = validateSafeText(input.language, 'Language', {
-    required: true,
-    maxLength: 40,
-  });
-  if (!language.valid) return { ok: false, error: language.error! };
-
-  const streamUrl = validateStreamUrl(input.streamUrl);
-  if (!streamUrl.valid) return { ok: false, error: streamUrl.error! };
-
-  return {
-    ok: true,
-    data: {
-      name: name.value,
-      language: language.value,
-      streamUrl: streamUrl.value,
-    },
-  };
-}
-
-export function adminCreateChannel(
-  session: AdminSession | null,
-  input: ChannelInput
-): { ok: true; channel: Channel } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const validated = validateChannelInput(input);
-  if (!validated.ok) return validated;
-
-  const existing = getPublicChannels();
-  const nowIso = new Date().toISOString();
+export function adminCreateChannel(data: ChannelInput): { ok: boolean; channel?: Channel; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
+  }
+  const validationError = validateChannelInput(data);
+  if (validationError) return { ok: false, error: validationError };
+  const channels = loadChannelsFromStorage();
+  const baseId = generateCleanSlug(data.name) || `channel-${Date.now()}`;
+  let id = baseId;
+  let counter = 2;
+  while (channels.some((c) => c.id === id)) {
+    id = `${baseId}-${counter}`;
+    counter += 1;
+  }
+  const now = Date.now();
   const channel: Channel = {
-    id: `ch-${generateRandomHex(6)}`,
-    ...validated.data,
-    createdAt: nowIso,
-    updatedAt: nowIso,
+    id,
+    name: normalizeChannelName(data.name),
+    description: data.description || '',
+    logoUrl: data.logoUrl || '',
+    streamUrl: data.streamUrl || '',
+    country: data.country || '',
+    language: data.language || 'English',
+    isActive: data.isActive !== false,
+    createdAt: now,
+    updatedAt: now,
   };
-
-  safeWriteJson(KEYS.CHANNELS, [...existing, channel]);
-  appendAuditLog('CHANNEL_CREATED', channel.name, verified.email, channel.language);
-  notifyDataChanged();
+  saveChannelsToStorage([...channels, normalizeChannel(channel)]);
+  void persistChannelToFirestore(channel);
+  addAuditEntry('channel_create', `Created channel ${channel.name}.`);
   return { ok: true, channel };
 }
 
-export function adminUpdateChannel(
-  session: AdminSession | null,
-  channelId: string,
-  input: ChannelInput
-): { ok: true; channel: Channel } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const validated = validateChannelInput(input);
-  if (!validated.ok) return validated;
-
-  const existing = getPublicChannels();
-  const idx = existing.findIndex((c) => c.id === channelId);
-  if (idx === -1) {
-    return { ok: false, error: 'Channel not found.' };
+export function adminUpdateChannel(id: string, data: Partial<ChannelInput>): { ok: boolean; channel?: Channel; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
   }
-
-  const updated: Channel = {
-    ...existing[idx],
-    ...validated.data,
-    updatedAt: new Date().toISOString(),
+  const channels = loadChannelsFromStorage();
+  const index = channels.findIndex((c) => c.id === id);
+  if (index === -1) return { ok: false, error: 'Channel not found.' };
+  const merged: ChannelInput = {
+    name: data.name ?? channels[index].name,
+    description: data.description ?? channels[index].description,
+    logoUrl: data.logoUrl ?? channels[index].logoUrl,
+    streamUrl: data.streamUrl ?? channels[index].streamUrl,
+    country: data.country ?? channels[index].country,
+    language: data.language ?? channels[index].language,
+    isActive: data.isActive ?? channels[index].isActive,
   };
-
-  const next = [...existing];
-  next[idx] = updated;
-  safeWriteJson(KEYS.CHANNELS, next);
-  appendAuditLog(
-    'CHANNEL_UPDATED',
-    updated.name,
-    verified.email,
-    updated.streamUrl ? 'Stream URL updated' : 'Stream URL cleared'
-  );
-  notifyDataChanged();
+  const validationError = validateChannelInput(merged);
+  if (validationError) return { ok: false, error: validationError };
+  const updated: Channel = {
+    ...channels[index],
+    name: normalizeChannelName(merged.name),
+    description: merged.description || '',
+    logoUrl: merged.logoUrl || '',
+    streamUrl: merged.streamUrl || '',
+    country: merged.country || '',
+    language: merged.language || 'English',
+    isActive: merged.isActive !== false,
+    updatedAt: Date.now(),
+  };
+  const next = [...channels];
+  next[index] = normalizeChannel(updated);
+  saveChannelsToStorage(next);
+  void persistChannelToFirestore(updated);
+  addAuditEntry('channel_update', `Updated channel ${updated.name}.`);
   return { ok: true, channel: updated };
 }
 
-export function adminDeleteChannel(
-  session: AdminSession | null,
-  channelId: string
-): { ok: true } | { ok: false; error: string } {
-  const verified = assertAuthorizedAdminSession(session);
-  const existing = getPublicChannels();
-  const target = existing.find((c) => c.id === channelId);
-  if (!target) {
-    return { ok: false, error: 'Channel not found.' };
+export function adminDeleteChannel(id: string): { ok: boolean; error?: string } {
+  if (!requireAdminSession()) {
+    return { ok: false, error: 'Admin session expired. Sign in again.' };
   }
-
-  safeWriteJson(
-    KEYS.CHANNELS,
-    existing.filter((c) => c.id !== channelId)
-  );
-
-  // Clean up references in scheduled matches
-  const matches = getPublicMatches();
-  const cleanedMatches = matches.map((m) => ({
-    ...m,
-    channelIds: m.channelIds.filter((id) => id !== channelId),
-  }));
-  safeWriteJson(KEYS.MATCHES, cleanedMatches);
-
-  appendAuditLog('CHANNEL_DELETED', target.name, verified.email);
-  notifyDataChanged();
+  const channels = loadChannelsFromStorage();
+  const target = channels.find((c) => c.id === id);
+  if (!target) return { ok: false, error: 'Channel not found.' };
+  saveChannelsToStorage(channels.filter((c) => c.id !== id));
+  void deleteFirestoreChannel(id);
+  addAuditEntry('channel_delete', `Deleted channel ${target.name}.`);
   return { ok: true };
+}
+
+// ---------- Maintenance ----------
+
+export function purgeExpiredMatches(): number {
+  const matches = loadMatchesFromStorage();
+  const expired = matches.filter((m) => isMatchExpired(m));
+  if (expired.length === 0) return 0;
+  const expiredSlugs = new Set(getExpiredSlugs());
+  expired.forEach((m) => expiredSlugs.add(m.id));
+  writeJson(KEYS.EXPIRED_SLUGS, [...expiredSlugs]);
+  const remaining = matches.filter((m) => !isMatchExpired(m));
+  saveMatchesToStorage(remaining);
+  void deleteFirestoreMatches(expired.map((m) => m.id));
+  return expired.length;
+}
+
+/** Remove any leftover local admin records from the old localStorage-only setup. */
+export function clearLegacyAdminKeys(): void {
+  removeKey(KEYS.ADMIN_AUTH);
+  removeKey(KEYS.ADMIN_LOCKOUT);
+}
+
+export function adminStorageNotice(): string {
+  return 'Admin data is stored in Firebase Firestore (server-side). Clearing browser data does not remove the admin account.';
+}
+
+export function isUsingLocalStorage(): boolean {
+  return false;
 }
