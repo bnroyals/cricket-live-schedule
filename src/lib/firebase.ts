@@ -23,12 +23,12 @@ export const ADMIN_EMAIL = 'biswajitcopy3@gmail.com';
 export const SECRET_ADMIN_PATH = '/zX5Cii7E1kn9WHkAwytGqDhQYB6r';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCW_CWPL7LQfsB81NgHfS3kuJRpaEm-Sxc',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCW_CWPL7LQFsBM1NgHfs3kuJRpaEm-Sxc',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'crypto-tranquility-jf6jr.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'crypto-tranquility-jf6jr',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'crypto-tranquility-jf6jr.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '1011881503114',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:1011881503114:web:b5b6a7a5c7b4e1c34cf5a9',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '504021111951',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:504021111951:web:9992abfb58867da32c0cfa',
 };
 
 /** Named Firestore database created for this app (see firebase-applet-config.json). */
