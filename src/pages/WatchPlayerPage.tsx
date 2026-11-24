@@ -4,6 +4,7 @@ import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
 import { getSafeEmbedUrl } from '../lib/security';
 import { useNavigate } from '../lib/router';
+import { AdSlot } from '../components/AdSlot';
 
 interface WatchPlayerPageProps {
   channelId: string;
@@ -95,6 +96,8 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
           <span>Match Schedule</span>
         </button>
       </div>
+
+      <AdSlot positionId="watch-player-top" />
 
       {/* Main Embedded Live Player Card */}
       <section className="mt-3 rounded-2xl bg-white border border-slate-200 shadow-xs overflow-hidden">

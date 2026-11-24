@@ -125,7 +125,12 @@ export default function App() {
   if (normalizedPath === '/channels') {
     return (
       <PublicLayout pathname={normalizedPath}>
-        <ChannelsPage channels={channels} loading={channelsLoading} />
+        <ChannelsPage
+          channels={channels}
+          matches={activeMatches}
+          nowMs={nowMs}
+          loading={channelsLoading}
+        />
       </PublicLayout>
     );
   }

@@ -10,6 +10,7 @@ import {
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
 import { TeamNameWithFlag } from '../components/TeamNameWithFlag';
+import { AdSlot } from '../components/AdSlot';
 
 interface HomePageProps {
   matches: CricketMatch[];
@@ -79,6 +80,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
+      <AdSlot positionId="home-top" />
       {/* Light Sporty 2-Column Hero Card */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs grid grid-cols-1 lg:grid-cols-12 items-stretch">
         <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between gap-5">
@@ -199,6 +201,8 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
           />
         </label>
       </section>
+
+      <AdSlot positionId="home-mid" />
 
       {/* Active Filter Summary */}
       <div className="mt-6 flex items-center justify-between border-b border-slate-200 pb-3">

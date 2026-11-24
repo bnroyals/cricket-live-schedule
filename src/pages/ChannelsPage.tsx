@@ -1,16 +1,28 @@
-import { ArrowLeft, Play, Tv } from 'lucide-react';
-import type { Channel } from '../types/cricket';
+import { ArrowLeft, Calendar, ChevronRight, Clock, Tv } from 'lucide-react';
+import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
 import { getSafeEmbedUrl } from '../lib/security';
+import {
+  formatDisplayDate,
+  formatIstTime,
+  getEffectiveMatchStatus,
+} from '../lib/time';
 import { useNavigate } from '../lib/router';
 
 interface ChannelsPageProps {
   channels: Channel[];
+  matches: CricketMatch[];
+  nowMs: number;
   loading?: boolean;
 }
 
-export function ChannelsPage({ channels, loading = false }: ChannelsPageProps) {
+export function ChannelsPage({
+  channels,
+  matches,
+  nowMs,
+  loading = false,
+}: ChannelsPageProps) {
   const navigate = useNavigate();
 
   return (
@@ -33,7 +45,7 @@ export function ChannelsPage({ channels, loading = false }: ChannelsPageProps) {
             Live Cricket Channels
           </h1>
           <p className="text-sm text-slate-600 mt-1.5">
-            Select any channel below to watch live inside the built-in player.
+            Browse broadcast channels below to find scheduled matches covered on each channel.
           </p>
         </div>
         <span className="text-xs font-semibold text-slate-500 font-mono-tabular whitespace-nowrap">
@@ -61,13 +73,16 @@ export function ChannelsPage({ channels, loading = false }: ChannelsPageProps) {
             const embedUrl = getSafeEmbedUrl(channel.streamUrl);
             const isPlayable = Boolean(embedUrl);
             const hasContent = hasPageContent(channel.pageContent);
+            const channelMatches = matches.filter((match) =>
+              match.channelIds.includes(channel.id)
+            );
 
             return (
               <article
                 key={channel.id}
                 className="rounded-2xl bg-white border border-slate-200 shadow-xs p-5 flex flex-col justify-between gap-5"
               >
-                <div className="space-y-5">
+                <div className="space-y-4">
                   <div className="flex items-start gap-3.5">
                     <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 text-emerald-700">
                       <Tv className="w-5 h-5" aria-hidden="true" />
@@ -86,14 +101,81 @@ export function ChannelsPage({ channels, loading = false }: ChannelsPageProps) {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/watch/${encodeURIComponent(channel.id)}`)}
-                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-                  >
-                    <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                    <span>Watch</span>
-                  </button>
+                  {/* Scheduled matches covered by this channel */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
+                      <span className="text-xs font-semibold text-slate-500">
+                        Scheduled Matches
+                      </span>
+                      <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
+                        {channelMatches.length}
+                      </span>
+                    </div>
+
+                    {channelMatches.length === 0 ? (
+                      <p className="text-xs text-slate-500 py-2">
+                        No scheduled matches on this channel
+                      </p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {channelMatches.map((match) => {
+                          const effectiveStatus = getEffectiveMatchStatus(match, nowMs);
+                          const matchPath = `/match/${match.slug}`;
+
+                          return (
+                            <li key={match.id}>
+                              <a
+                                href={matchPath}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigate(matchPath);
+                                }}
+                                className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 transition-colors group"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 text-[11px]">
+                                    <span
+                                      className={`font-bold ${
+                                        effectiveStatus === 'LIVE'
+                                          ? 'text-red-600'
+                                          : effectiveStatus === 'Finished'
+                                            ? 'text-slate-500'
+                                            : 'text-emerald-700'
+                                      }`}
+                                    >
+                                      {effectiveStatus}
+                                    </span>
+                                    <span className="text-slate-300" aria-hidden="true">·</span>
+                                    <span className="text-slate-600 truncate">
+                                      {match.tournament}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-900 group-hover:text-emerald-800 truncate mt-0.5">
+                                    {match.teamA} vs {match.teamB}
+                                  </p>
+                                  <div className="flex items-center gap-2 text-[11px] text-slate-600 mt-0.5 font-mono-tabular">
+                                    <span className="inline-flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />
+                                      <span>{formatDisplayDate(match.date)}</span>
+                                    </span>
+                                    <span className="text-slate-300" aria-hidden="true">·</span>
+                                    <span className="inline-flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />
+                                      <span>{formatIstTime(match.startTime)}</span>
+                                    </span>
+                                  </div>
+                                </div>
+                                <ChevronRight
+                                  className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 shrink-0 transition-colors"
+                                  aria-hidden="true"
+                                />
+                              </a>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
                 </div>
 
                 {hasContent && (
