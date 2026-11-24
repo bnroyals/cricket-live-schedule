@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react';
+import { getCountryFlagUrl, isWestIndiesTeam } from '../lib/countries';
 import { getTeamFlagUrl } from '../lib/teamFlags';
 
 interface TeamNameWithFlagProps {
   teamName: string;
+  countryCode?: string;
 }
 
 /**
- * Renders a country flag image immediately to the left of an exact national team name.
- * For non-mapped teams (franchise, WBBL, zonal, West Indies) or on image load error,
- * renders only the team name cleanly.
+ * Renders a country flag image immediately to the left of a team name.
+ * Uses the match's stored ISO countryCode when provided; otherwise falls back to
+ * exact national team lookup via getTeamFlagUrl(teamName).
+ * Never renders a flag for West Indies or when no code/fallback exists, and hides
+ * cleanly on image load error.
  */
-export function TeamNameWithFlag({ teamName }: TeamNameWithFlagProps) {
-  const flagUrl = getTeamFlagUrl(teamName);
+export function TeamNameWithFlag({ teamName, countryCode }: TeamNameWithFlagProps) {
+  const flagUrl = isWestIndiesTeam(teamName)
+    ? null
+    : (getCountryFlagUrl(countryCode) ?? getTeamFlagUrl(teamName));
+
   const [imgError, setImgError] = useState(false);
 
   useEffect(() => {

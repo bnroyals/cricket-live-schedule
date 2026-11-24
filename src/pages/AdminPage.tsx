@@ -24,6 +24,7 @@ import type {
   MatchStatus,
 } from '../types/cricket';
 import {
+  adminBackfillMatchCountryCodes,
   adminChangePassword,
   adminCreateChannel,
   adminCreateMatch,
@@ -46,6 +47,7 @@ import {
   touchAdminSession,
   waitForFirebaseAuthReady,
 } from '../lib/storage';
+import { COUNTRIES } from '../lib/countries';
 import { generateCleanSlug, validateStrongPassword } from '../lib/security';
 import {
   formatAuditTimestamp,
@@ -70,6 +72,8 @@ function createEmptyMatchForm() {
   return {
     teamA: '',
     teamB: '',
+    countryCodeA: '',
+    countryCodeB: '',
     tournament: '',
     matchNumber: '',
     venue: '',
@@ -114,6 +118,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   const [matchForm, setMatchForm] = useState(() => createEmptyMatchForm());
   const [confirmDeleteMatchId, setConfirmDeleteMatchId] = useState<string | null>(null);
   const [matchSubmitting, setMatchSubmitting] = useState(false);
+  const [backfillingCodes, setBackfillingCodes] = useState(false);
 
   // Channel CRUD State
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
@@ -348,6 +353,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     setMatchForm({
       teamA: match.teamA,
       teamB: match.teamB,
+      countryCodeA: match.countryCodeA ?? '',
+      countryCodeB: match.countryCodeB ?? '',
       tournament: match.tournament,
       matchNumber: match.matchNumber,
       venue: match.venue,
@@ -360,6 +367,34 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     });
     setFeedback(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBackfillCountryCodes = async () => {
+    setFeedback(null);
+    setBackfillingCodes(true);
+    try {
+      const res = await adminBackfillMatchCountryCodes(session);
+      if (!res.ok) {
+        setFeedback({ type: 'error', text: res.error || 'Unable to backfill country codes.' });
+        return;
+      }
+      setFeedback({
+        type: 'success',
+        text:
+          res.updatedCount > 0
+            ? `Updated country codes for ${res.updatedCount} ${res.updatedCount === 1 ? 'match' : 'matches'} (checked ${res.totalChecked}).`
+            : `No matches needed country code updates (checked ${res.totalChecked}).`,
+      });
+      onRefreshData();
+      void loadAuditLog(getActiveAdminSession());
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to backfill country codes.',
+      });
+    } finally {
+      setBackfillingCodes(false);
+    }
   };
 
   const handleDeleteMatch = async (matchId: string) => {
@@ -889,6 +924,49 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="match-country-a" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Team A Country
+                    </label>
+                    <select
+                      id="match-country-a"
+                      value={matchForm.countryCodeA}
+                      onChange={(e) =>
+                        setMatchForm((f) => ({ ...f, countryCodeA: e.target.value }))
+                      }
+                      className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                    >
+                      <option value="">No flag / none</option>
+                      {COUNTRIES.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="match-country-b" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Team B Country
+                    </label>
+                    <select
+                      id="match-country-b"
+                      value={matchForm.countryCodeB}
+                      onChange={(e) =>
+                        setMatchForm((f) => ({ ...f, countryCodeB: e.target.value }))
+                      }
+                      className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                    >
+                      <option value="">No flag / none</option>
+                      {COUNTRIES.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label htmlFor="match-tournament" className="block text-xs font-semibold text-slate-700 mb-1">
                     Tournament *
@@ -1054,13 +1132,23 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
 
             {/* Full Match List */}
             <section className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-200">
-                <h2 className="font-display text-2xl font-bold text-slate-900">
-                  Scheduled Matches
-                </h2>
-                <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
-                  {matches.length} active
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
+                <div>
+                  <h2 className="font-display text-2xl font-bold text-slate-900">
+                    Scheduled Matches
+                  </h2>
+                  <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
+                    {matches.length} active
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBackfillCountryCodes}
+                  disabled={backfillingCodes}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-60 border border-slate-200 text-xs font-semibold text-slate-800 transition-colors"
+                >
+                  {backfillingCodes ? 'Backfilling...' : 'Backfill country codes for existing matches'}
+                </button>
               </div>
 
               {matches.length === 0 ? (

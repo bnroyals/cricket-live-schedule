@@ -1,41 +1,83 @@
-/**
- * Exact national team name -> flagcdn.com ISO code mapping.
- * Returns null for any team not in this exact allowlist (e.g., West Indies,
- * franchise teams, WBBL teams, Inter-Zonal teams).
- */
-const TEAM_FLAG_CODES = new Map<string, string>([
-  ['india', 'in'],
-  ['pakistan', 'pk'],
-  ['bangladesh', 'bd'],
-  ['sri lanka', 'lk'],
-  ['australia', 'au'],
-  ['new zealand', 'nz'],
-  ['south africa', 'za'],
-  ['england', 'gb-eng'],
-  ['afghanistan', 'af'],
-  ['zimbabwe', 'zw'],
-  ['ireland', 'ie'],
-  ['netherlands', 'nl'],
-  ['scotland', 'gb-sct'],
-  ['nepal', 'np'],
-  ['united states', 'us'],
-  ['usa', 'us'],
-  ['canada', 'ca'],
-  ['united arab emirates', 'ae'],
-  ['uae', 'ae'],
-  ['oman', 'om'],
-  ['namibia', 'na'],
-  ['kenya', 'ke'],
-  ['papua new guinea', 'pg'],
-]);
+import {
+  findCountryCodeByName,
+  getCountryFlagUrl,
+  isWestIndiesTeam,
+} from './countries';
 
 /**
- * Returns the flagcdn.com w80 PNG URL for an exact national team name
- * (trimmed, case-insensitive), or null if the team is not in the map.
+ * Fallback exact national team name -> flagcdn.com w80 PNG URL mapping,
+ * derived from the single-source COUNTRIES list (plus USA/UAE/UK aliases).
+ * Always returns null for West Indies and non-country team names.
  */
 export function getTeamFlagUrl(teamName: string): string | null {
+  if (!teamName || typeof teamName !== 'string' || isWestIndiesTeam(teamName)) {
+    return null;
+  }
+  const code = findCountryCodeByName(teamName);
+  return getCountryFlagUrl(code);
+}
+
+const NATIONAL_SQUAD_SUFFIX_RE = /\s+(?:women|men|a|u-?19|under-?19)$/i;
+
+/**
+ * Backfill helper for existing Firestore matches missing countryCodeA / countryCodeB.
+ * Rules:
+ *  - Never set a code for West Indies.
+ *  - Match national team names against COUNTRIES (including Women/Men/A/U19 squads).
+ *  - League defaults by tournament or team name:
+ *      - ILT20 -> ae
+ *      - WBBL -> au
+ *      - Inter-Zonal or any team name containing 'Zone' -> in
+ *  - Return null if no rule applies (no guessing).
+ */
+export function resolveBackfillCountryCode(
+  teamName: string,
+  tournament: string
+): string | null {
   if (!teamName || typeof teamName !== 'string') return null;
-  const code = TEAM_FLAG_CODES.get(teamName.trim().toLowerCase());
-  if (!code) return null;
-  return `https://flagcdn.com/w80/${code}.png`;
+  if (isWestIndiesTeam(teamName)) return null;
+
+  const trimmedName = teamName.trim();
+  const lowerName = trimmedName.toLowerCase();
+  const lowerTournament = (tournament || '').trim().toLowerCase();
+
+  // 1. Direct national team match against COUNTRIES
+  const directCode = findCountryCodeByName(trimmedName);
+  if (directCode) return directCode;
+
+  // 2. National squad suffix match (e.g. "India Women", "South Africa Women", "Australia A")
+  const strippedBase = trimmedName.replace(NATIONAL_SQUAD_SUFFIX_RE, '').trim();
+  if (strippedBase && strippedBase !== trimmedName) {
+    const baseCode = findCountryCodeByName(strippedBase);
+    if (baseCode) return baseCode;
+  }
+
+  // 3. League defaults by tournament or team name
+  if (
+    lowerTournament.includes('inter-zonal') ||
+    lowerTournament.includes('inter zonal') ||
+    lowerName.includes('zone')
+  ) {
+    return 'in';
+  }
+
+  if (
+    lowerTournament.includes('wbbl') ||
+    lowerTournament.includes("women's big bash") ||
+    lowerTournament.includes('womens big bash') ||
+    lowerTournament.includes('big bash') ||
+    lowerName.includes('wbbl')
+  ) {
+    return 'au';
+  }
+
+  if (
+    lowerTournament.includes('ilt20') ||
+    lowerTournament.includes('international league t20') ||
+    lowerName.includes('ilt20')
+  ) {
+    return 'ae';
+  }
+
+  return null;
 }

@@ -272,9 +272,9 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
 
                   {/* Teams Headline */}
                   <h3 className="font-display text-3xl sm:text-[34px] font-extrabold text-slate-900 tracking-tight mt-3 leading-tight flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <TeamNameWithFlag teamName={match.teamA} />
+                    <TeamNameWithFlag teamName={match.teamA} countryCode={match.countryCodeA} />
                     <span className="text-amber-600 font-bold text-2xl">vs</span>
-                    <TeamNameWithFlag teamName={match.teamB} />
+                    <TeamNameWithFlag teamName={match.teamB} countryCode={match.countryCodeB} />
                   </h3>
 
                   {/* Time, Date & Venue */}

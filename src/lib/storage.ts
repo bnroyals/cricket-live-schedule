@@ -36,6 +36,8 @@ import {
   validateStrongPassword,
 } from './security';
 import { isMatchExpired } from './time';
+import { isValidCountryCode, isWestIndiesTeam, normalizeCountryCode } from './countries';
+import { resolveBackfillCountryCode } from './teamFlags';
 
 /**
  * Live Firebase Firestore storage + hardened single-admin Firebase Auth.
@@ -132,6 +134,8 @@ function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
   return raw
     .map((match) => ({
       ...match,
+      countryCodeA: normalizeCountryCode(match.countryCodeA),
+      countryCodeB: normalizeCountryCode(match.countryCodeB),
       channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
       pageContent: typeof match.pageContent === 'string' ? match.pageContent : '',
     }))
@@ -789,6 +793,8 @@ export async function fetchAuditLog(session: AdminSession | null): Promise<Audit
 interface MatchInput {
   teamA: string;
   teamB: string;
+  countryCodeA?: string;
+  countryCodeB?: string;
   tournament: string;
   matchNumber: string;
   venue: string;
@@ -807,6 +813,12 @@ function validateMatchInput(input: MatchInput): { ok: boolean; error?: string } 
   if (!teamB.valid) return { ok: false, error: teamB.error };
   if (teamA.value === teamB.value) {
     return { ok: false, error: 'Team A and Team B must be different.' };
+  }
+  if (input.countryCodeA && input.countryCodeA.trim() && !isValidCountryCode(input.countryCodeA)) {
+    return { ok: false, error: 'Select a valid country for Team A.' };
+  }
+  if (input.countryCodeB && input.countryCodeB.trim() && !isValidCountryCode(input.countryCodeB)) {
+    return { ok: false, error: 'Select a valid country for Team B.' };
   }
   const tournament = validateSafeText(input.tournament, 'Tournament', {
     required: true,
@@ -860,11 +872,21 @@ export async function adminCreateMatch(
     liveMatches.map((match) => match.slug)
   );
   const nowIso = new Date().toISOString();
+  const teamATrimmed = input.teamA.trim();
+  const teamBTrimmed = input.teamB.trim();
+  const countryCodeA = isWestIndiesTeam(teamATrimmed)
+    ? undefined
+    : normalizeCountryCode(input.countryCodeA);
+  const countryCodeB = isWestIndiesTeam(teamBTrimmed)
+    ? undefined
+    : normalizeCountryCode(input.countryCodeB);
   const match: CricketMatch = {
     id: `match_${Date.now()}_${generateRandomHex(6)}`,
     slug,
-    teamA: input.teamA.trim(),
-    teamB: input.teamB.trim(),
+    teamA: teamATrimmed,
+    teamB: teamBTrimmed,
+    countryCodeA,
+    countryCodeB,
     tournament: input.tournament.trim(),
     matchNumber: input.matchNumber.trim(),
     venue: input.venue.trim(),
@@ -921,11 +943,21 @@ export async function adminUpdateMatch(
           input.teamB,
           others.map((match) => match.slug)
         );
+  const teamATrimmed = input.teamA.trim();
+  const teamBTrimmed = input.teamB.trim();
+  const countryCodeA = isWestIndiesTeam(teamATrimmed)
+    ? undefined
+    : normalizeCountryCode(input.countryCodeA);
+  const countryCodeB = isWestIndiesTeam(teamBTrimmed)
+    ? undefined
+    : normalizeCountryCode(input.countryCodeB);
   const updated: CricketMatch = {
     ...target,
     slug,
-    teamA: input.teamA.trim(),
-    teamB: input.teamB.trim(),
+    teamA: teamATrimmed,
+    teamB: teamBTrimmed,
+    countryCodeA,
+    countryCodeB,
     tournament: input.tournament.trim(),
     matchNumber: input.matchNumber.trim(),
     venue: input.venue.trim(),
@@ -952,6 +984,82 @@ export async function adminUpdateMatch(
     `${updated.tournament} · ${updated.date} ${updated.startTime} IST`
   );
   return { ok: true, match: updated };
+}
+
+export async function adminBackfillMatchCountryCodes(
+  session: AdminSession | null
+): Promise<{ ok: boolean; updatedCount: number; totalChecked: number; error?: string }> {
+  try {
+    assertAuthorizedAdminSession(session);
+  } catch (error) {
+    return {
+      ok: false,
+      updatedCount: 0,
+      totalChecked: 0,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
+  }
+
+  try {
+    const db = getFirestoreDb();
+    const snap = await getDocs(collection(db, 'matches'));
+    const pendingUpdates: Array<{ id: string; patch: Partial<Pick<CricketMatch, 'countryCodeA' | 'countryCodeB'>> }> = [];
+
+    for (const matchDoc of snap.docs) {
+      const data = matchDoc.data() as CricketMatch;
+      const patch: Partial<Pick<CricketMatch, 'countryCodeA' | 'countryCodeB'>> = {};
+
+      if (!normalizeCountryCode(data.countryCodeA)) {
+        const resolvedA = resolveBackfillCountryCode(data.teamA, data.tournament);
+        if (resolvedA) {
+          patch.countryCodeA = resolvedA;
+        }
+      }
+
+      if (!normalizeCountryCode(data.countryCodeB)) {
+        const resolvedB = resolveBackfillCountryCode(data.teamB, data.tournament);
+        if (resolvedB) {
+          patch.countryCodeB = resolvedB;
+        }
+      }
+
+      if (patch.countryCodeA || patch.countryCodeB) {
+        pendingUpdates.push({ id: matchDoc.id, patch });
+      }
+    }
+
+    const BATCH_LIMIT = 400;
+    for (let i = 0; i < pendingUpdates.length; i += BATCH_LIMIT) {
+      const chunk = pendingUpdates.slice(i, i + BATCH_LIMIT);
+      const batch = writeBatch(db);
+      for (const item of chunk) {
+        batch.update(doc(db, 'matches', item.id), item.patch);
+      }
+      await batch.commit();
+    }
+
+    if (pendingUpdates.length > 0) {
+      appendAuditLog(
+        'MATCH_UPDATED',
+        'Backfill Country Codes',
+        AUTHORIZED_ADMIN_EMAIL,
+        `Updated country codes on ${pendingUpdates.length} ${pendingUpdates.length === 1 ? 'match' : 'matches'}`
+      );
+    }
+
+    return {
+      ok: true,
+      updatedCount: pendingUpdates.length,
+      totalChecked: snap.size,
+    };
+  } catch {
+    return {
+      ok: false,
+      updatedCount: 0,
+      totalChecked: 0,
+      error: 'Failed to backfill country codes in Firestore. Check your connection and try again.',
+    };
+  }
 }
 
 export async function adminDeleteMatch(

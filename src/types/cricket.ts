@@ -15,6 +15,8 @@ export interface CricketMatch {
   slug: string;
   teamA: string;
   teamB: string;
+  countryCodeA?: string;
+  countryCodeB?: string;
   tournament: string;
   matchNumber: string;
   venue: string;

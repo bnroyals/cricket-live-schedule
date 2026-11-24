@@ -142,9 +142,9 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
         {/* Teams Display */}
         <div className="mt-6 py-7 border-y border-slate-200 text-center bg-[#F8FAFC] -mx-6 sm:-mx-8 px-6 sm:px-8">
           <h1 className="font-display text-4xl sm:text-6xl font-extrabold tracking-tight text-slate-900 leading-none flex flex-wrap items-center justify-center gap-x-3 sm:gap-x-4 gap-y-2">
-            <TeamNameWithFlag teamName={match.teamA} />
+            <TeamNameWithFlag teamName={match.teamA} countryCode={match.countryCodeA} />
             <span className="text-amber-600 text-3xl sm:text-4xl font-bold">vs</span>
-            <TeamNameWithFlag teamName={match.teamB} />
+            <TeamNameWithFlag teamName={match.teamB} countryCode={match.countryCodeB} />
           </h1>
 
           {/* Countdown or Live Status */}
