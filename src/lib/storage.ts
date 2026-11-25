@@ -142,6 +142,20 @@ function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
       countryCodeB: normalizeCountryCode(match.countryCodeB),
       channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
       pageContent: typeof match.pageContent === 'string' ? match.pageContent : '',
+      format: typeof match.format === 'string' && match.format.trim() ? match.format.trim() : undefined,
+      organizer:
+        typeof match.organizer === 'string' && match.organizer.trim()
+          ? match.organizer.trim()
+          : undefined,
+      result: typeof match.result === 'string' && match.result.trim() ? match.result.trim() : undefined,
+      playerOfTheMatch:
+        typeof match.playerOfTheMatch === 'string' && match.playerOfTheMatch.trim()
+          ? match.playerOfTheMatch.trim()
+          : undefined,
+      playingXI: match.playingXI && typeof match.playingXI === 'object' ? match.playingXI : undefined,
+      playingXiTeamA: Array.isArray(match.playingXiTeamA) ? match.playingXiTeamA : undefined,
+      playingXiTeamB: Array.isArray(match.playingXiTeamB) ? match.playingXiTeamB : undefined,
+      topPerformers: Array.isArray(match.topPerformers) ? match.topPerformers : undefined,
     }))
     .sort((a, b) => {
       const aKey = `${a.date}T${a.startTime}`;

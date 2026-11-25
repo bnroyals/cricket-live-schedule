@@ -14,6 +14,17 @@ export interface Channel {
   updatedAt: string;
 }
 
+export interface MatchTopPerformer {
+  player: string;
+  performance: string;
+  team?: string;
+}
+
+export interface MatchPlayingXI {
+  teamA?: string[];
+  teamB?: string[];
+}
+
 export interface CricketMatch {
   id: string;
   slug: string;
@@ -23,6 +34,10 @@ export interface CricketMatch {
   countryCodeB?: string;
   tournament: string;
   matchNumber: string;
+  /** Optional explicit match format (e.g., T20I, ODI, Test, T20) */
+  format?: string;
+  /** Optional series/event organizer name */
+  organizer?: string;
   venue: string;
   /** YYYY-MM-DD in IST */
   date: string;
@@ -33,6 +48,14 @@ export interface CricketMatch {
   status: MatchStatus;
   channelIds: string[];
   pageContent?: string;
+  /** Optional Playing XI squads when announced */
+  playingXI?: MatchPlayingXI;
+  playingXiTeamA?: string[];
+  playingXiTeamB?: string[];
+  /** Optional post-match result summary & top performers when available */
+  result?: string;
+  playerOfTheMatch?: string;
+  topPerformers?: Array<string | MatchTopPerformer>;
   createdAt: string;
   updatedAt: string;
 }

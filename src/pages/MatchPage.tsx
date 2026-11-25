@@ -1,8 +1,21 @@
+import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Calendar, Clock, Lock, MapPin, Play } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
 import { channelHasPlayableEmbed, getChannelDisplayName } from '../lib/channelHtml';
+import {
+  buildMatchDetailsRows,
+  buildMatchFaqs,
+  buildMatchPageMeta,
+  buildMatchPreviewParagraphs,
+  buildMatchSportsEventJsonLd,
+  detectMatchFormat,
+  getMatchPlayingXI,
+  getMatchResultInfo,
+  serializeJsonLdSafe,
+  stripLinksFromHtml,
+} from '../lib/matchSeo';
 import {
   formatCountdownDuration,
   formatDisplayDate,
@@ -33,6 +46,44 @@ export function MatchPage({
   onOpenChannel,
 }: MatchPageProps) {
   const navigate = useNavigate();
+
+  const detectedFormat = useMemo(
+    () => (match ? detectMatchFormat(match) : null),
+    [match]
+  );
+
+  const pageMeta = useMemo(
+    () => (match ? buildMatchPageMeta(match, detectedFormat) : null),
+    [match, detectedFormat]
+  );
+
+  const linkFreeAdminContent = useMemo(
+    () => (match && hasPageContent(match.pageContent) ? stripLinksFromHtml(match.pageContent ?? '') : ''),
+    [match]
+  );
+
+  useEffect(() => {
+    if (!pageMeta) return;
+    const prevTitle = document.title;
+    const descEl = document.querySelector('meta[name="description"]');
+    const ogTitleEl = document.querySelector('meta[property="og:title"]');
+    const ogDescEl = document.querySelector('meta[property="og:description"]');
+    const prevDesc = descEl?.getAttribute('content') ?? null;
+    const prevOgTitle = ogTitleEl?.getAttribute('content') ?? null;
+    const prevOgDesc = ogDescEl?.getAttribute('content') ?? null;
+
+    document.title = pageMeta.title;
+    descEl?.setAttribute('content', pageMeta.description);
+    ogTitleEl?.setAttribute('content', pageMeta.title);
+    ogDescEl?.setAttribute('content', pageMeta.description);
+
+    return () => {
+      document.title = prevTitle;
+      if (prevDesc !== null) descEl?.setAttribute('content', prevDesc);
+      if (prevOgTitle !== null) ogTitleEl?.setAttribute('content', prevOgTitle);
+      if (prevOgDesc !== null) ogDescEl?.setAttribute('content', prevOgDesc);
+    };
+  }, [pageMeta]);
 
   if (loading && !match) {
     return (
@@ -97,6 +148,27 @@ export function MatchPage({
 
   const primaryChannel = playableAssignedChannels[0] ?? null;
   const primaryChannelName = primaryChannel ? getChannelDisplayName(primaryChannel) : '';
+  const assignedChannelNames = playableAssignedChannels.map((ch) => getChannelDisplayName(ch));
+
+  const previewParagraphs = buildMatchPreviewParagraphs(
+    match,
+    effectiveStatus,
+    detectedFormat,
+    assignedChannelNames
+  );
+  const matchDetailsRows = buildMatchDetailsRows(
+    match,
+    effectiveStatus,
+    detectedFormat,
+    assignedChannelNames
+  );
+  const playingXI = getMatchPlayingXI(match);
+  const resultInfo = getMatchResultInfo(match);
+  const showResultSection = resultInfo.hasAny || effectiveStatus === 'Finished';
+  const faqs = buildMatchFaqs(match, detectedFormat, assignedChannelNames);
+  const sportsEventJsonLd = serializeJsonLdSafe(
+    buildMatchSportsEventJsonLd(match, effectiveStatus, detectedFormat)
+  );
 
   const handleWatchClick = (channelId: string) => {
     if (!channelEntryOpen) return;
@@ -105,6 +177,10 @@ export function MatchPage({
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: sportsEventJsonLd }}
+      />
       {/* Back navigation */}
       <button
         type="button"
@@ -346,10 +422,169 @@ export function MatchPage({
         )}
       </section>
 
-      {/* Admin-Authored Rich Match Page Content */}
-      {hasPageContent(match.pageContent) && (
-        <section className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
-          <PageContent html={match.pageContent} />
+      {/* 1. Match Preview — Unique factual prose + Admin-written Page Content (zero links) */}
+      <section
+        aria-labelledby="match-preview-heading"
+        className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
+      >
+        <h2
+          id="match-preview-heading"
+          className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+        >
+          Match Preview
+        </h2>
+        <div className="mt-4 space-y-3.5 text-sm sm:text-[15px] text-slate-700 leading-relaxed">
+          {previewParagraphs.map((paragraph, idx) => (
+            <p key={idx}>{paragraph}</p>
+          ))}
+        </div>
+
+        {hasPageContent(linkFreeAdminContent) && (
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <PageContent html={linkFreeAdminContent} />
+          </div>
+        )}
+      </section>
+
+      {/* 2. Match Details — Structured facts table from match data */}
+      <section
+        aria-labelledby="match-details-heading"
+        className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
+      >
+        <h2
+          id="match-details-heading"
+          className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+        >
+          Match Details
+        </h2>
+        <dl className="mt-4 divide-y divide-slate-200 border-t border-b border-slate-200 text-sm">
+          {matchDetailsRows.map((row) => (
+            <div
+              key={row.label}
+              className="py-3 grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-4"
+            >
+              <dt className="font-semibold text-slate-500">{row.label}</dt>
+              <dd className="sm:col-span-2 font-semibold text-slate-900">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      {/* 3. Playing XI — Real squads when present, clean empty state otherwise */}
+      <section
+        aria-labelledby="playing-xi-heading"
+        className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
+      >
+        <h2
+          id="playing-xi-heading"
+          className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+        >
+          Playing XI
+        </h2>
+        {playingXI.hasAny ? (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-200">
+                {match.teamA}
+              </h3>
+              {playingXI.teamA.length > 0 ? (
+                <ol className="mt-3 space-y-1.5 text-sm text-slate-700 list-decimal list-inside">
+                  {playingXI.teamA.map((player, idx) => (
+                    <li key={`${player}-${idx}`}>{player}</li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-3 text-sm text-slate-500">Playing XI not announced yet.</p>
+              )}
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-200">
+                {match.teamB}
+              </h3>
+              {playingXI.teamB.length > 0 ? (
+                <ol className="mt-3 space-y-1.5 text-sm text-slate-700 list-decimal list-inside">
+                  {playingXI.teamB.map((player, idx) => (
+                    <li key={`${player}-${idx}`}>{player}</li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-3 text-sm text-slate-500">Playing XI not announced yet.</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+            Playing XI not announced yet. Confirmed lineups for {match.teamA} and {match.teamB} will appear here once released ahead of the match.
+          </p>
+        )}
+      </section>
+
+      {/* 4. Result — Shown only when result data exists or match has finished */}
+      {showResultSection && (
+        <section
+          aria-labelledby="match-result-heading"
+          className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
+        >
+          <h2
+            id="match-result-heading"
+            className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+          >
+            Result
+          </h2>
+          {resultInfo.hasAny ? (
+            <div className="mt-4 space-y-4 text-sm text-slate-700">
+              {resultInfo.resultText && (
+                <p className="text-base font-bold text-slate-900">{resultInfo.resultText}</p>
+              )}
+              {resultInfo.playerOfTheMatch && (
+                <p>
+                  <span className="font-semibold text-slate-900">Player of the Match: </span>
+                  <span>{resultInfo.playerOfTheMatch}</span>
+                </p>
+              )}
+              {resultInfo.topPerformers.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Top Performers</h3>
+                  <ul className="mt-2 space-y-1.5 list-disc list-inside text-slate-700">
+                    {resultInfo.topPerformers.map((item, idx) => (
+                      <li key={`${item}-${idx}`}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-600">
+              Result not available yet. Official match outcome and top performers will appear here once published.
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* 5. FAQs — Plain-text Q&A from match data only (zero links) */}
+      {faqs.length > 0 && (
+        <section
+          aria-labelledby="match-faqs-heading"
+          className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
+        >
+          <h2
+            id="match-faqs-heading"
+            className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+          >
+            FAQs
+          </h2>
+          <dl className="mt-4 divide-y divide-slate-200 border-t border-slate-200">
+            {faqs.map((faq) => (
+              <div key={faq.question} className="py-4">
+                <dt className="text-sm sm:text-base font-bold text-slate-900">
+                  {faq.question}
+                </dt>
+                <dd className="mt-1.5 text-sm text-slate-700 leading-relaxed">
+                  {faq.answer}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </section>
       )}
     </div>
