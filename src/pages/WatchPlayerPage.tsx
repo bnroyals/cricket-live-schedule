@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Maximize,
@@ -32,6 +32,44 @@ interface FullscreenElementWithVendor extends HTMLDivElement {
 interface FullscreenDocumentWithVendor extends Document {
   webkitFullscreenElement?: Element | null;
   webkitExitFullscreen?: () => Promise<void> | void;
+}
+
+const SIGNED_PARAM_NAMES = new Set([
+  'sig',
+  'signature',
+  'hmac',
+  'policy',
+  'key-pair-id',
+  'x-amz-signature',
+]);
+
+/**
+ * Builds the playback iframe src for the requested mute state without mutating
+ * the stored channel streamUrl. Preserves all existing query parameters and hash;
+ * skips adding params if the URL contains a cryptographic signature parameter.
+ */
+function buildIframePlaybackUrl(
+  baseUrl: string,
+  muted: boolean,
+  explicitAudioMode: boolean
+): string {
+  if (!explicitAudioMode) {
+    return baseUrl;
+  }
+  try {
+    const parsed = new URL(baseUrl);
+    for (const key of parsed.searchParams.keys()) {
+      if (SIGNED_PARAM_NAMES.has(key.toLowerCase())) {
+        return baseUrl;
+      }
+    }
+    parsed.searchParams.set('autoplay', '1');
+    parsed.searchParams.set('muted', muted ? '1' : '0');
+    parsed.searchParams.set('mute', muted ? '1' : '0');
+    return parsed.toString();
+  } catch {
+    return baseUrl;
+  }
 }
 
 /**
@@ -112,9 +150,13 @@ export function WatchPlayerPage({
   const [shieldActive, setShieldActive] = useState<boolean>(true);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [audioModeExplicit, setAudioModeExplicit] = useState<boolean>(false);
+  const [nativeFullscreen, setNativeFullscreen] = useState<boolean>(false);
+  const [fallbackFullscreen, setFallbackFullscreen] = useState<boolean>(false);
   const [streamStarted, setStreamStarted] = useState<boolean>(false);
   const [reloadKey, setReloadKey] = useState<number>(0);
+
+  const isFullscreen = nativeFullscreen || fallbackFullscreen;
 
   const normalizedId = channelId.trim().toLowerCase();
   const channel =
@@ -124,6 +166,18 @@ export function WatchPlayerPage({
 
   const embedUrl = channel ? getSafeEmbedUrl(channel.streamUrl) : null;
   const isPlayable = Boolean(embedUrl);
+
+  const iframeSrc = useMemo(() => {
+    if (!embedUrl) return null;
+    return buildIframePlaybackUrl(embedUrl, isMuted, audioModeExplicit);
+  }, [embedUrl, isMuted, audioModeExplicit]);
+
+  // Toggle Permissions Policy autoplay delegation:
+  // - When unmuted: `autoplay *` delegates user-gesture autoplay with sound to the iframe & nested players.
+  // - When muted: `autoplay 'none'` blocks unmuted autoplay so reloading muted reliably returns to muted state.
+  const iframeAllow = isMuted
+    ? "autoplay 'none'; fullscreen *; encrypted-media *; picture-in-picture *"
+    : 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *';
 
   const clearRetryTimers = useCallback(() => {
     for (const timerId of retryTimersRef.current) {
@@ -138,6 +192,8 @@ export function WatchPlayerPage({
     setShieldActive(true);
     setIsPlaying(false);
     setIsMuted(true);
+    setAudioModeExplicit(false);
+    setFallbackFullscreen(false);
     setStreamStarted(false);
     setReloadKey(0);
   }, [channelId, embedUrl, clearRetryTimers]);
@@ -149,12 +205,32 @@ export function WatchPlayerPage({
     };
   }, [clearRetryTimers]);
 
+  const exitFullscreenNow = useCallback(() => {
+    setFallbackFullscreen(false);
+    const doc = document as FullscreenDocumentWithVendor;
+    const activeEl = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+    if (activeEl) {
+      if (typeof doc.exitFullscreen === 'function') {
+        void doc.exitFullscreen().catch(() => {
+          // Ignore exitFullscreen errors
+        });
+      } else if (typeof doc.webkitExitFullscreen === 'function') {
+        void doc.webkitExitFullscreen();
+      }
+    }
+  }, []);
+
   // Sync fullscreen button state with native Fullscreen API events
   useEffect(() => {
     const syncFullscreen = () => {
       const doc = document as FullscreenDocumentWithVendor;
       const activeEl = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
-      setIsFullscreen(Boolean(activeEl));
+      const active = Boolean(activeEl);
+      setNativeFullscreen(active);
+      if (active) {
+        // Keep focus on the parent container so Escape is never trapped inside the cross-origin iframe
+        playerContainerRef.current?.focus({ preventScroll: true });
+      }
     };
 
     document.addEventListener('fullscreenchange', syncFullscreen);
@@ -165,33 +241,48 @@ export function WatchPlayerPage({
     };
   }, []);
 
-  const triggerStreamPlayCommands = useCallback(() => {
-    clearRetryTimers();
-    dispatchIframeCommand(iframeRef.current, 'play');
-    const t1 = window.setTimeout(() => {
-      dispatchIframeCommand(iframeRef.current, 'play');
-    }, 200);
-    const t2 = window.setTimeout(() => {
-      dispatchIframeCommand(iframeRef.current, 'play');
-    }, 700);
-    retryTimersRef.current = [t1, t2];
-  }, [clearRetryTimers]);
+  // Ensure Escape always exits fullscreen (both native and fallback)
+  useEffect(() => {
+    if (!isFullscreen) return;
 
-  // Starts/resumes stream on user click gesture and manages the click-shield overlay
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        exitFullscreenNow();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [isFullscreen, exitFullscreenNow]);
+
+  const triggerStreamCommands = useCallback(
+    (muted: boolean) => {
+      clearRetryTimers();
+      const sendBatch = () => {
+        dispatchIframeCommand(iframeRef.current, 'play');
+        dispatchIframeCommand(iframeRef.current, muted ? 'mute' : 'unmute');
+      };
+      sendBatch();
+      const t1 = window.setTimeout(sendBatch, 250);
+      const t2 = window.setTimeout(sendBatch, 800);
+      retryTimersRef.current = [t1, t2];
+    },
+    [clearRetryTimers]
+  );
+
+  // Starts/resumes stream on user click gesture and dismisses the click-shield overlay
   const handleStartStream = useCallback(() => {
     if (!embedUrl) return;
     setStreamStarted(true);
     setIsPlaying(true);
     setShieldActive(false);
-
-    // Focus the unsandboxed iframe and issue play commands on the user gesture
-    try {
-      iframeRef.current?.focus();
-    } catch {
-      // Ignore focus errors
-    }
-    triggerStreamPlayCommands();
-  }, [embedUrl, triggerStreamPlayCommands]);
+    triggerStreamCommands(isMuted);
+  }, [embedUrl, isMuted, triggerStreamCommands]);
 
   const handleTogglePlay = useCallback(() => {
     if (!embedUrl) return;
@@ -211,43 +302,64 @@ export function WatchPlayerPage({
     }
   }, [embedUrl, isPlaying, shieldActive, streamStarted, handleStartStream, clearRetryTimers]);
 
+  // Remounts the unsandboxed iframe directly on the Unmute/Mute click gesture so the
+  // host player starts genuinely unmuted (with sound) or muted again.
   const handleToggleMute = useCallback(() => {
     if (!embedUrl) return;
     const nextMuted = !isMuted;
+    clearRetryTimers();
     setIsMuted(nextMuted);
-
-    // If user clicks Unmute before starting playback, also start the player cleanly
-    if (!nextMuted && !streamStarted) {
-      setStreamStarted(true);
-      setIsPlaying(true);
-      setShieldActive(false);
-      triggerStreamPlayCommands();
-    }
-
-    dispatchIframeCommand(iframeRef.current, nextMuted ? 'mute' : 'unmute');
-  }, [embedUrl, isMuted, streamStarted, triggerStreamPlayCommands]);
+    setAudioModeExplicit(true);
+    setStreamStarted(true);
+    setIsPlaying(true);
+    setShieldActive(false);
+    setReloadKey((k) => k + 1);
+  }, [embedUrl, isMuted, clearRetryTimers]);
 
   const handleToggleFullscreen = useCallback(() => {
     const container = playerContainerRef.current as FullscreenElementWithVendor | null;
-    const doc = document as FullscreenDocumentWithVendor;
     if (!container) return;
 
-    const currentFs = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
-    if (currentFs) {
-      if (typeof doc.exitFullscreen === 'function') {
-        void doc.exitFullscreen();
-      } else if (typeof doc.webkitExitFullscreen === 'function') {
-        void doc.webkitExitFullscreen();
-      }
+    if (isFullscreen) {
+      exitFullscreenNow();
       return;
     }
 
+    const enterFallback = () => {
+      setFallbackFullscreen(true);
+      window.requestAnimationFrame(() => {
+        container.focus({ preventScroll: true });
+      });
+    };
+
     if (typeof container.requestFullscreen === 'function') {
-      void container.requestFullscreen();
+      try {
+        const result = container.requestFullscreen();
+        if (result && typeof result.then === 'function') {
+          result
+            .then(() => {
+              container.focus({ preventScroll: true });
+            })
+            .catch(() => {
+              enterFallback();
+            });
+        } else {
+          container.focus({ preventScroll: true });
+        }
+      } catch {
+        enterFallback();
+      }
     } else if (typeof container.webkitRequestFullscreen === 'function') {
-      void container.webkitRequestFullscreen();
+      try {
+        void container.webkitRequestFullscreen();
+        container.focus({ preventScroll: true });
+      } catch {
+        enterFallback();
+      }
+    } else {
+      enterFallback();
     }
-  }, []);
+  }, [isFullscreen, exitFullscreenNow]);
 
   if (loading && !channel) {
     return (
@@ -332,30 +444,41 @@ export function WatchPlayerPage({
           </div>
         </div>
 
-        {/* Responsive 16:9 In-App Player Area */}
-        <div className="p-4 sm:p-6 bg-[#F8FAFC]">
+        {/* Player + Controls Wrapper (Fullscreen container keeps controls & Exit Fullscreen reachable) */}
+        <div
+          ref={playerContainerRef}
+          tabIndex={-1}
+          className={
+            fallbackFullscreen
+              ? 'fixed inset-0 z-50 flex flex-col bg-slate-950 p-3 sm:p-4 outline-none'
+              : isFullscreen
+                ? 'w-full h-full flex flex-col bg-slate-950 p-3 sm:p-4 outline-none'
+                : 'p-4 sm:p-6 bg-[#F8FAFC] outline-none'
+          }
+        >
+          {/* Responsive 16:9 In-App Player Area */}
           <div
-            ref={playerContainerRef}
-            className="relative w-full aspect-video rounded-xl overflow-hidden border border-slate-200 bg-slate-950"
+            className={`relative w-full overflow-hidden border bg-slate-950 ${
+              isFullscreen
+                ? 'flex-1 min-h-0 rounded-lg border-slate-800'
+                : 'aspect-video rounded-xl border-slate-200'
+            }`}
           >
-            {isPlayable && embedUrl ? (
+            {isPlayable && iframeSrc ? (
               <>
                 {/* Unsandboxed stream iframe (NO sandbox attribute, NO allow-popups) */}
                 <iframe
                   ref={iframeRef}
-                  key={`${embedUrl}-${reloadKey}`}
-                  src={embedUrl}
+                  key={`${embedUrl}-${reloadKey}-${isMuted ? 'muted' : 'unmuted'}`}
+                  src={iframeSrc}
                   title={`${channel.name} Live Stream`}
                   className="w-full h-full border-0"
-                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                  allow={iframeAllow}
                   allowFullScreen
                   referrerPolicy="no-referrer"
                   onLoad={() => {
                     if (streamStarted && isPlaying) {
-                      triggerStreamPlayCommands();
-                      if (!isMuted) {
-                        dispatchIframeCommand(iframeRef.current, 'unmute');
-                      }
+                      triggerStreamCommands(isMuted);
                     }
                   }}
                 />
@@ -390,6 +513,19 @@ export function WatchPlayerPage({
                     </button>
                   </div>
                 )}
+
+                {/* Always-reachable Exit Fullscreen button while in fullscreen */}
+                {isFullscreen && (
+                  <button
+                    type="button"
+                    onClick={exitFullscreenNow}
+                    aria-label="Exit Fullscreen"
+                    className="absolute top-3 right-3 z-30 inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-lg bg-slate-950/85 hover:bg-slate-900 text-white border border-white/20 text-xs sm:text-sm font-bold shadow-lg transition-colors"
+                  >
+                    <Minimize className="w-4 h-4 shrink-0" aria-hidden="true" />
+                    <span>Exit Fullscreen</span>
+                  </button>
+                )}
               </>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-center p-6 sm:p-10 bg-slate-50">
@@ -417,8 +553,8 @@ export function WatchPlayerPage({
           </div>
 
           {/* Three Player Control Buttons Below Video: Play, Unmute, Fullscreen */}
-          {isPlayable && embedUrl && (
-            <div className="mt-4 grid grid-cols-3 gap-2.5 sm:gap-3">
+          {isPlayable && iframeSrc && (
+            <div className="mt-3 sm:mt-4 grid grid-cols-3 gap-2.5 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={handleTogglePlay}
@@ -440,20 +576,31 @@ export function WatchPlayerPage({
               <button
                 type="button"
                 onClick={handleToggleMute}
+                aria-pressed={!isMuted}
                 className={`inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl border text-sm font-bold transition-all duration-150 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${
-                  isMuted
-                    ? 'bg-white hover:bg-slate-100 border-slate-300 text-slate-900'
-                    : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-400 text-emerald-900'
+                  isFullscreen
+                    ? isMuted
+                      ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white'
+                      : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-500 text-white'
+                    : isMuted
+                      ? 'bg-white hover:bg-slate-100 border-slate-300 text-slate-900'
+                      : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-400 text-emerald-900'
                 }`}
               >
                 {isMuted ? (
                   <>
-                    <Volume2 className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                    <Volume2
+                      className={`w-4 h-4 shrink-0 ${isFullscreen ? 'text-emerald-400' : 'text-emerald-700'}`}
+                      aria-hidden="true"
+                    />
                     <span>Unmute</span>
                   </>
                 ) : (
                   <>
-                    <VolumeX className="w-4 h-4 shrink-0 text-slate-600" aria-hidden="true" />
+                    <VolumeX
+                      className={`w-4 h-4 shrink-0 ${isFullscreen ? 'text-white' : 'text-slate-600'}`}
+                      aria-hidden="true"
+                    />
                     <span>Mute</span>
                   </>
                 )}
@@ -462,11 +609,15 @@ export function WatchPlayerPage({
               <button
                 type="button"
                 onClick={handleToggleFullscreen}
-                className="inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl bg-white hover:bg-slate-100 active:scale-[0.98] border border-slate-300 text-slate-900 text-sm font-bold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                className={`inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl active:scale-[0.98] border text-sm font-bold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${
+                  isFullscreen
+                    ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white'
+                    : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-900'
+                }`}
               >
                 {isFullscreen ? (
                   <>
-                    <Minimize className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                    <Minimize className="w-4 h-4 shrink-0 text-emerald-400" aria-hidden="true" />
                     <span>Exit Fullscreen</span>
                   </>
                 ) : (
