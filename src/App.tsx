@@ -53,7 +53,8 @@ export default function App() {
 
   // Redirect removed /channels route directly to Home/Schedule (/)
   useEffect(() => {
-    if (normalizedPath === '/channels' || normalizedPath.startsWith('/channels/')) {
+    const lowerPath = normalizedPath.toLowerCase();
+    if (lowerPath === '/channels' || lowerPath.startsWith('/channels/')) {
       navigate('/', true);
     }
   }, [normalizedPath]);
