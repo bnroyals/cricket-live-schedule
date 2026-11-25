@@ -1,14 +1,17 @@
-import { ArrowLeft, Calendar, Clock, MapPin, Play } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, Lock, MapPin, Play } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
 import { channelHasPlayableEmbed, getChannelDisplayName } from '../lib/channelHtml';
 import {
+  formatCountdownDuration,
   formatDisplayDate,
   formatIstTime,
+  getChannelEntryOpenTimestamp,
   getCountdownToStart,
   getEffectiveMatchStatus,
   getMatchExpiryTimestamp,
+  isChannelEntryOpen,
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
 import { TeamNameWithFlag } from '../components/TeamNameWithFlag';
@@ -79,6 +82,13 @@ export function MatchPage({
   const expiryMs = getMatchExpiryTimestamp(match);
   const minutesUntilAutoDelete = Math.max(0, Math.ceil((expiryMs - nowMs) / 60000));
 
+  // Channel entry opens strictly from 10 minutes before scheduled IST start time onward.
+  const channelEntryOpen = isChannelEntryOpen(match, nowMs);
+  const channelOpenAtMs = getChannelEntryOpenTimestamp(match);
+  const msUntilChannelOpens = Math.max(0, channelOpenAtMs - nowMs);
+  const matchStartCountdownText = formatCountdownDuration(countdown.totalMs);
+  const channelOpenCountdownText = formatCountdownDuration(msUntilChannelOpens);
+
   // Strict match-only channel resolution: ONLY channels assigned to THIS match
   // whose HTML contains a playable embed (or valid legacy streamUrl).
   const playableAssignedChannels = match.channelIds
@@ -87,6 +97,11 @@ export function MatchPage({
 
   const primaryChannel = playableAssignedChannels[0] ?? null;
   const primaryChannelName = primaryChannel ? getChannelDisplayName(primaryChannel) : '';
+
+  const handleWatchClick = (channelId: string) => {
+    if (!channelEntryOpen) return;
+    onOpenChannel(channelId);
+  };
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
@@ -185,7 +200,7 @@ export function MatchPage({
                 <p className="text-lg sm:text-xl font-bold text-red-600">
                   Match is LIVE now
                 </p>
-                {primaryChannel && (
+                {primaryChannel && channelEntryOpen && (
                   <p className="text-xs sm:text-sm text-slate-600 mt-1">
                     Tap Watch below to open the built-in live broadcast player.
                   </p>
@@ -233,6 +248,33 @@ export function MatchPage({
           </div>
         </dl>
 
+        {/* Live Match-Start Countdown Timer above the Watch button(s) */}
+        {primaryChannel && !countdown.isStarted && (
+          <div
+            className={`mt-6 rounded-xl border px-4 py-3.5 text-center ${
+              channelEntryOpen
+                ? 'bg-emerald-50 border-emerald-200'
+                : 'bg-slate-50 border-slate-200'
+            }`}
+          >
+            <p className="text-sm sm:text-base font-bold text-slate-900 font-mono-tabular">
+              Match starts in{' '}
+              <span className={channelEntryOpen ? 'text-emerald-700' : 'text-slate-900'}>
+                {matchStartCountdownText}
+              </span>
+            </p>
+            {channelEntryOpen ? (
+              <p className="text-xs font-semibold text-emerald-700 mt-1">
+                Match starting soon — channel is now open
+              </p>
+            ) : (
+              <p className="text-xs text-slate-600 mt-1 font-mono-tabular">
+                Channel opens 10 minutes before match start (in {channelOpenCountdownText})
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Additional Playable Channels Assigned to THIS Match Only */}
         {playableAssignedChannels.length > 1 && (
           <div className="mt-6 pt-6 border-t border-slate-200">
@@ -244,18 +286,35 @@ export function MatchPage({
                 <button
                   key={ch.id}
                   type="button"
-                  onClick={() => onOpenChannel(ch.id)}
-                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-400 text-left transition-colors min-h-[48px]"
+                  disabled={!channelEntryOpen}
+                  aria-disabled={!channelEntryOpen}
+                  onClick={() => handleWatchClick(ch.id)}
+                  className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl border text-left transition-colors min-h-[48px] ${
+                    channelEntryOpen
+                      ? 'bg-slate-50 hover:bg-emerald-50 border-slate-200 hover:border-emerald-400 cursor-pointer'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-80'
+                  }`}
                 >
                   <div className="min-w-0">
-                    <span className="block text-sm font-bold text-slate-900 truncate">
+                    <span
+                      className={`block text-sm font-bold truncate ${
+                        channelEntryOpen ? 'text-slate-900' : 'text-slate-500'
+                      }`}
+                    >
                       {getChannelDisplayName(ch)}
                     </span>
                   </div>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 shrink-0">
-                    <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
-                    <span>Watch</span>
-                  </span>
+                  {channelEntryOpen ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 shrink-0">
+                      <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
+                      <span>Watch</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 shrink-0">
+                      <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Locked</span>
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -264,13 +323,23 @@ export function MatchPage({
 
         {/* Primary Focal CTA — Shown ONLY if this match has a playable assigned channel */}
         {primaryChannel && (
-          <div className="mt-8 flex items-stretch">
+          <div className="mt-6 flex items-stretch">
             <button
               type="button"
-              onClick={() => onOpenChannel(primaryChannel.id)}
-              className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+              disabled={!channelEntryOpen}
+              aria-disabled={!channelEntryOpen}
+              onClick={() => handleWatchClick(primaryChannel.id)}
+              className={`w-full min-h-[52px] px-6 py-3.5 rounded-xl text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 ${
+                channelEntryOpen
+                  ? 'bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700'
+                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+              }`}
             >
-              <Play className="w-5 h-5 fill-current" aria-hidden="true" />
+              {channelEntryOpen ? (
+                <Play className="w-5 h-5 fill-current" aria-hidden="true" />
+              ) : (
+                <Lock className="w-4 h-4" aria-hidden="true" />
+              )}
               <span>Watch Live on {primaryChannelName}</span>
             </button>
           </div>

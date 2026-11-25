@@ -1,6 +1,7 @@
 import type { CricketMatch, MatchStatus } from '../types/cricket';
 
 export const AUTO_DELETE_GRACE_MS = 30 * 60 * 1000; // 30 minutes after match end time
+export const CHANNEL_ENTRY_LEAD_MS = 10 * 60 * 1000; // Channel opens 10 minutes before match start
 
 /**
  * Returns YYYY-MM-DD for a given Date in IST (Asia/Kolkata).
@@ -30,8 +31,12 @@ export function getIstTomorrowDateString(now: Date = new Date()): string {
  */
 export function getIstTimestamp(dateStr: string, timeStr: string): number {
   const cleanDate = dateStr.trim();
-  const cleanTime = timeStr.trim().length === 5 ? timeStr.trim() : '00:00';
-  const parsed = Date.parse(`${cleanDate}T${cleanTime}:00+05:30`);
+  const rawTime = timeStr.trim();
+  const timeMatch = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(rawTime);
+  const cleanTime = timeMatch
+    ? `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}:${timeMatch[3] ?? '00'}`
+    : '00:00:00';
+  const parsed = Date.parse(`${cleanDate}T${cleanTime}+05:30`);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
@@ -65,6 +70,53 @@ export function isMatchExpired(
 ): boolean {
   const expiryMs = getMatchExpiryTimestamp(match);
   return expiryMs > 0 && nowMs >= expiryMs;
+}
+
+/**
+ * Computes the epoch (ms) when channel entry opens: 10 minutes before the
+ * match's scheduled IST start time.
+ */
+export function getChannelEntryOpenTimestamp(
+  match: Pick<CricketMatch, 'date' | 'startTime'>
+): number {
+  const startMs = getIstTimestamp(match.date, match.startTime);
+  return startMs > 0 ? startMs - CHANNEL_ENTRY_LEAD_MS : 0;
+}
+
+/**
+ * Returns true ONLY from 10 minutes before the match's scheduled IST start
+ * time onward, until the match auto-expires 30 minutes after end time.
+ */
+export function isChannelEntryOpen(
+  match: Pick<CricketMatch, 'date' | 'startTime' | 'endTime'>,
+  nowMs: number = Date.now()
+): boolean {
+  const openAtMs = getChannelEntryOpenTimestamp(match);
+  if (openAtMs <= 0) return false;
+  return nowMs >= openAtMs && !isMatchExpired(match, nowMs);
+}
+
+/**
+ * Formats a positive millisecond duration into a compact live countdown string
+ * like "2d 3h 15m 30s", "2h 15m 30s", "8m 42s", or "45s".
+ */
+export function formatCountdownDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
 }
 
 /**
@@ -143,7 +195,7 @@ export function getCountdownToStart(match: CricketMatch, nowMs: number = Date.no
   if (diff <= 0) {
     return { totalMs: 0, days: 0, hours: 0, minutes: 0, seconds: 0, isStarted: true };
   }
-  const totalSeconds = Math.floor(diff / 1000);
+  const totalSeconds = Math.ceil(diff / 1000);
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);

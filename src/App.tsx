@@ -11,7 +11,7 @@ import {
   subscribeToLiveChannels,
   subscribeToLiveMatches,
 } from './lib/storage';
-import { isMatchExpired } from './lib/time';
+import { isChannelEntryOpen, isMatchExpired } from './lib/time';
 import type { Channel, CricketMatch } from './types/cricket';
 
 export default function App() {
@@ -51,7 +51,10 @@ export default function App() {
     void purgeExpiredMatches(Date.now());
   }, []);
 
-  const handleOpenChannel = useCallback((channelId: string) => {
+  const handleOpenChannel = useCallback((channelId: string, match: CricketMatch | null) => {
+    if (!match || !isChannelEntryOpen(match, Date.now())) {
+      return;
+    }
     setActiveChannelId(channelId);
     window.scrollTo({ top: 0 });
   }, []);
@@ -153,7 +156,7 @@ export default function App() {
           channels={channels}
           nowMs={nowMs}
           loading={matchesLoading}
-          onOpenChannel={handleOpenChannel}
+          onOpenChannel={(channelId) => handleOpenChannel(channelId, match)}
         />
       </PublicLayout>
     );
