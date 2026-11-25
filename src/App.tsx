@@ -23,6 +23,10 @@ export default function App() {
   const [matchesLoading, setMatchesLoading] = useState<boolean>(true);
   const [channelsLoading, setChannelsLoading] = useState<boolean>(true);
 
+  // Pure in-memory selected channel state — channels have NO public URL and can
+  // ONLY be opened via a Match Page Watch button.
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+
   // 1-second clock tick for smooth live match countdowns and expiry checks.
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
@@ -47,14 +51,39 @@ export default function App() {
     void purgeExpiredMatches(Date.now());
   }, []);
 
+  const handleOpenChannel = useCallback((channelId: string) => {
+    setActiveChannelId(channelId);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  const handleCloseChannel = useCallback(() => {
+    setActiveChannelId(null);
+  }, []);
+
+  const handleBackToSchedule = useCallback(() => {
+    setActiveChannelId(null);
+    navigate('/');
+  }, []);
+
   // Normalize path (strip trailing slash except root)
   const normalizedPath =
     pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
 
-  // Redirect removed /channels route directly to Home/Schedule (/)
+  // Clear in-app channel view whenever the route changes (e.g. Back/Forward or nav links).
+  useEffect(() => {
+    setActiveChannelId(null);
+  }, [pathname]);
+
+  // Redirect removed /channels and /watch routes directly to Home/Schedule (/)
   useEffect(() => {
     const lowerPath = normalizedPath.toLowerCase();
-    if (lowerPath === '/channels' || lowerPath.startsWith('/channels/')) {
+    if (
+      lowerPath === '/channels' ||
+      lowerPath.startsWith('/channels/') ||
+      lowerPath === '/watch' ||
+      lowerPath.startsWith('/watch/')
+    ) {
+      setActiveChannelId(null);
       navigate('/', true);
     }
   }, [normalizedPath]);
@@ -95,15 +124,16 @@ export default function App() {
     );
   }
 
-  // In-App Live Embedded Player Page (/watch/<channelId>)
-  if (normalizedPath.startsWith('/watch/')) {
-    const channelId = decodeURIComponent(normalizedPath.slice('/watch/'.length));
+  // In-App Channel View — opened ONLY through a Match Page Watch button via app state.
+  // Never exposed at a public URL; browser address never changes to /watch/<channelId>.
+  if (activeChannelId !== null) {
     return (
-      <PublicLayout pathname={normalizedPath}>
+      <PublicLayout pathname="" onNavigate={handleCloseChannel}>
         <WatchPlayerPage
-          channelId={channelId}
+          channelId={activeChannelId}
           channels={channels}
           loading={channelsLoading}
+          onBackToSchedule={handleBackToSchedule}
         />
       </PublicLayout>
     );
@@ -123,12 +153,13 @@ export default function App() {
           channels={channels}
           nowMs={nowMs}
           loading={matchesLoading}
+          onOpenChannel={handleOpenChannel}
         />
       </PublicLayout>
     );
   }
 
-  // Home Page (/) and fallback (including redirected /channels)
+  // Home Page (/) and fallback (including redirected /channels and /watch)
   return (
     <PublicLayout pathname="/">
       <HomePage matches={activeMatches} nowMs={nowMs} />

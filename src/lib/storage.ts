@@ -1207,7 +1207,7 @@ export async function adminCreateChannel(
   } catch {
     return { ok: false, error: 'Failed to save channel to Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_CREATED', channel.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${channel.id}`);
+  appendAuditLog('CHANNEL_CREATED', channel.name, AUTHORIZED_ADMIN_EMAIL, `ID: ${channel.id}`);
   return { ok: true, channel };
 }
 
@@ -1244,7 +1244,7 @@ export async function adminUpdateChannel(
   } catch {
     return { ok: false, error: 'Failed to update channel in Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_UPDATED', updated.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${updated.id}`);
+  appendAuditLog('CHANNEL_UPDATED', updated.name, AUTHORIZED_ADMIN_EMAIL, `ID: ${updated.id}`);
   return { ok: true, channel: updated };
 }
 
@@ -1282,6 +1282,6 @@ export async function adminDeleteChannel(
   } catch {
     return { ok: false, error: 'Failed to delete channel from Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${target.id}`);
+  appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `ID: ${target.id}`);
   return { ok: true };
 }

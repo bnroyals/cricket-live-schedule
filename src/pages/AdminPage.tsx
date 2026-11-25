@@ -1379,7 +1379,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                         <div className="min-w-0">
                           <h3 className="text-base font-bold text-slate-900 truncate">{displayName}</h3>
                           <p className="text-xs text-slate-500 mt-0.5 font-mono-tabular truncate">
-                            /watch/{ch.id}
+                            ID: {ch.id}
                           </p>
                         </div>
 

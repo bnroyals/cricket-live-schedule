@@ -9,10 +9,11 @@ interface WatchPlayerPageProps {
   channelId: string;
   channels: Channel[];
   loading?: boolean;
+  onBackToSchedule?: () => void;
 }
 
 /**
- * Pure-HTML Channel Page (/watch/<channelId>).
+ * Pure-HTML in-app Channel View (no public URL; opened only from a Match Page Watch button).
  * Renders ONLY the channel's saved HTML code (with automatic read-time
  * fallback generation from legacy fields if a stored channel has no HTML yet).
  */
@@ -20,8 +21,17 @@ export function WatchPlayerPage({
   channelId,
   channels,
   loading = false,
+  onBackToSchedule,
 }: WatchPlayerPageProps) {
   const navigate = useNavigate();
+
+  const handleBackToSchedule = () => {
+    if (onBackToSchedule) {
+      onBackToSchedule();
+    } else {
+      navigate('/');
+    }
+  };
 
   const normalizedId = channelId.trim().toLowerCase();
   const channel =
@@ -59,7 +69,7 @@ export function WatchPlayerPage({
           <div className="mt-7 flex items-center justify-center">
             <button
               type="button"
-              onClick={() => navigate('/')}
+              onClick={handleBackToSchedule}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold whitespace-nowrap transition-colors"
             >
               <ArrowLeft className="w-4 h-4" aria-hidden="true" />
@@ -78,7 +88,7 @@ export function WatchPlayerPage({
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={handleBackToSchedule}
           className="inline-flex items-center gap-2 min-h-[44px] text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />

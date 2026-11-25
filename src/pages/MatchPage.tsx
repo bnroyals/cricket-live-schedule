@@ -19,9 +19,16 @@ interface MatchPageProps {
   channels: Channel[];
   nowMs: number;
   loading?: boolean;
+  onOpenChannel: (channelId: string) => void;
 }
 
-export function MatchPage({ match, channels, nowMs, loading = false }: MatchPageProps) {
+export function MatchPage({
+  match,
+  channels,
+  nowMs,
+  loading = false,
+  onOpenChannel,
+}: MatchPageProps) {
   const navigate = useNavigate();
 
   if (loading && !match) {
@@ -237,7 +244,7 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
                 <button
                   key={ch.id}
                   type="button"
-                  onClick={() => navigate(`/watch/${encodeURIComponent(ch.id)}`)}
+                  onClick={() => onOpenChannel(ch.id)}
                   className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-400 text-left transition-colors min-h-[48px]"
                 >
                   <div className="min-w-0">
@@ -260,7 +267,7 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
           <div className="mt-8 flex items-stretch">
             <button
               type="button"
-              onClick={() => navigate(`/watch/${encodeURIComponent(primaryChannel.id)}`)}
+              onClick={() => onOpenChannel(primaryChannel.id)}
               className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             >
               <Play className="w-5 h-5 fill-current" aria-hidden="true" />

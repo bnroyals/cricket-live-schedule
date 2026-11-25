@@ -5,19 +5,21 @@ import { useNavigate } from '../lib/router';
 interface PublicLayoutProps {
   pathname: string;
   children: React.ReactNode;
+  onNavigate?: () => void;
 }
 
 /**
- * Light-mode-only, English-only public layout shell for Home (/), Match Page (/match/<slug>), and Watch Player (/watch/<channelId>).
- * Contains ZERO links to /admin, ZERO /channels directory links, ZERO dark/light toggle, and ZERO storage notice.
+ * Light-mode-only, English-only public layout shell for Home (/), Match Page (/match/<slug>), and in-app Channel View.
+ * Contains ZERO links to /admin, ZERO /channels directory links, ZERO /watch links, ZERO dark/light toggle, and ZERO storage notice.
  */
-export function PublicLayout({ pathname, children }: PublicLayoutProps) {
+export function PublicLayout({ pathname, children, onNavigate }: PublicLayoutProps) {
   const navigate = useNavigate();
 
   const isScheduleActive = pathname === '/' || pathname.startsWith('/match/');
 
   const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
     e.preventDefault();
+    onNavigate?.();
     navigate(path);
   };
 
