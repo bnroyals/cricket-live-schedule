@@ -14,6 +14,7 @@ export interface MatchPlayingXIData {
 
 export interface MatchResultData {
   resultText: string | null;
+  resultSummary: string | null;
   playerOfTheMatch: string | null;
   topPerformers: string[];
   hasAny: boolean;
@@ -129,6 +130,10 @@ export function getMatchPlayingXI(match: CricketMatch): MatchPlayingXIData {
 export function getMatchResultInfo(match: CricketMatch): MatchResultData {
   const resultText =
     typeof match.result === 'string' && match.result.trim() ? match.result.trim() : null;
+  const resultSummary =
+    typeof match.resultSummary === 'string' && match.resultSummary.trim()
+      ? match.resultSummary.trim()
+      : null;
   const playerOfTheMatch =
     typeof match.playerOfTheMatch === 'string' && match.playerOfTheMatch.trim()
       ? match.playerOfTheMatch.trim()
@@ -156,9 +161,10 @@ export function getMatchResultInfo(match: CricketMatch): MatchResultData {
 
   return {
     resultText,
+    resultSummary,
     playerOfTheMatch,
     topPerformers,
-    hasAny: Boolean(resultText || playerOfTheMatch || topPerformers.length > 0),
+    hasAny: Boolean(resultText || resultSummary || playerOfTheMatch || topPerformers.length > 0),
   };
 }
 

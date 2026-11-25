@@ -47,6 +47,8 @@ export interface CricketMatch {
   endTime: string;
   status: MatchStatus;
   channelIds: string[];
+  /** Optional custom preview prose displayed at the start of the Match Preview section */
+  previewText?: string;
   pageContent?: string;
   /** Optional Playing XI squads when announced */
   playingXI?: MatchPlayingXI;
@@ -54,6 +56,7 @@ export interface CricketMatch {
   playingXiTeamB?: string[];
   /** Optional post-match result summary & top performers when available */
   result?: string;
+  resultSummary?: string;
   playerOfTheMatch?: string;
   topPerformers?: Array<string | MatchTopPerformer>;
   createdAt: string;

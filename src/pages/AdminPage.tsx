@@ -59,7 +59,7 @@ import {
   getIstDateString,
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
-import { RichTextEditor } from '../components/RichTextEditor';
+import { getMatchPlayingXI, getMatchResultInfo } from '../lib/matchSeo';
 import {
   getChannelDisplayName,
   getChannelHtml,
@@ -73,6 +73,13 @@ interface AdminPageProps {
 }
 
 type AdminTab = 'matches' | 'channels' | 'audit' | 'security';
+
+function parseMultilineList(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
 
 function createEmptyMatchForm() {
   return {
@@ -88,6 +95,12 @@ function createEmptyMatchForm() {
     endTime: '19:30',
     status: 'Upcoming' as MatchStatus,
     channelIds: [] as string[],
+    previewText: '',
+    playingXiTeamA: '',
+    playingXiTeamB: '',
+    result: '',
+    resultSummary: '',
+    topPerformers: '',
     pageContent: '',
   };
 }
@@ -322,9 +335,30 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
     setFeedback(null);
     setMatchSubmitting(true);
     try {
+      const payload = {
+        teamA: matchForm.teamA,
+        teamB: matchForm.teamB,
+        countryCodeA: matchForm.countryCodeA,
+        countryCodeB: matchForm.countryCodeB,
+        tournament: matchForm.tournament,
+        matchNumber: matchForm.matchNumber,
+        venue: matchForm.venue,
+        date: matchForm.date,
+        startTime: matchForm.startTime,
+        endTime: matchForm.endTime,
+        status: matchForm.status,
+        channelIds: matchForm.channelIds,
+        previewText: matchForm.previewText,
+        playingXiTeamA: parseMultilineList(matchForm.playingXiTeamA),
+        playingXiTeamB: parseMultilineList(matchForm.playingXiTeamB),
+        result: matchForm.result,
+        resultSummary: matchForm.resultSummary,
+        topPerformers: parseMultilineList(matchForm.topPerformers),
+        pageContent: matchForm.pageContent,
+      };
       const res = editingMatchId
-        ? await adminUpdateMatch(session, editingMatchId, matchForm)
-        : await adminCreateMatch(session, matchForm);
+        ? await adminUpdateMatch(session, editingMatchId, payload)
+        : await adminCreateMatch(session, payload);
 
       if (!res.ok || !res.match) {
         setFeedback({ type: 'error', text: res.error || 'Unable to save match.' });
@@ -352,6 +386,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   };
 
   const startEditMatch = (match: CricketMatch) => {
+    const xi = getMatchPlayingXI(match);
+    const resultInfo = getMatchResultInfo(match);
     setEditingMatchId(match.id);
     setMatchForm({
       teamA: match.teamA,
@@ -366,6 +402,12 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       endTime: match.endTime,
       status: match.status,
       channelIds: match.channelIds,
+      previewText: match.previewText ?? '',
+      playingXiTeamA: xi.teamA.join('\n'),
+      playingXiTeamB: xi.teamB.join('\n'),
+      result: resultInfo.resultText ?? '',
+      resultSummary: resultInfo.resultSummary ?? '',
+      topPerformers: resultInfo.topPerformers.join('\n'),
       pageContent: match.pageContent ?? '',
     });
     setFeedback(null);
@@ -1104,14 +1146,114 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                   </div>
                 </div>
 
-                {/* Match Page Content — Blogger-style WYSIWYG Editor */}
-                <RichTextEditor
-                  id="match-page-content"
-                  label="Page Content"
-                  value={matchForm.pageContent}
-                  onChange={(html) => setMatchForm((f) => ({ ...f, pageContent: html }))}
-                  placeholder="Write match preview, pitch report, playing XI, links, or images..."
-                />
+                {/* Match Page Sections — Preview, Playing XI, Result, Top Performers, Page Content */}
+                <div className="pt-4 border-t border-slate-200 space-y-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Match Page Content &amp; Coverage
+                  </p>
+
+                  <div>
+                    <label htmlFor="match-preview-text" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Match Preview Text
+                    </label>
+                    <textarea
+                      id="match-preview-text"
+                      rows={4}
+                      value={matchForm.previewText}
+                      onChange={(e) => setMatchForm((f) => ({ ...f, previewText: e.target.value }))}
+                      placeholder="Write custom preview prose shown at the start of the Match Preview section..."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="match-xi-team-a" className="block text-xs font-semibold text-slate-700 mb-1">
+                        Playing XI — {matchForm.teamA.trim() || 'Team A'}
+                      </label>
+                      <textarea
+                        id="match-xi-team-a"
+                        rows={5}
+                        value={matchForm.playingXiTeamA}
+                        onChange={(e) => setMatchForm((f) => ({ ...f, playingXiTeamA: e.target.value }))}
+                        placeholder="One player per line..."
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="match-xi-team-b" className="block text-xs font-semibold text-slate-700 mb-1">
+                        Playing XI — {matchForm.teamB.trim() || 'Team B'}
+                      </label>
+                      <textarea
+                        id="match-xi-team-b"
+                        rows={5}
+                        value={matchForm.playingXiTeamB}
+                        onChange={(e) => setMatchForm((f) => ({ ...f, playingXiTeamB: e.target.value }))}
+                        placeholder="One player per line..."
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 -mt-2">
+                    Enter one player per line. Clear both boxes to reset Playing XI to &ldquo;not announced yet&rdquo;.
+                  </p>
+
+                  <div>
+                    <label htmlFor="match-result" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Result
+                    </label>
+                    <input
+                      id="match-result"
+                      type="text"
+                      value={matchForm.result}
+                      onChange={(e) => setMatchForm((f) => ({ ...f, result: e.target.value }))}
+                      placeholder="e.g. India won by 6 wickets"
+                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="match-result-summary" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Result Summary
+                    </label>
+                    <textarea
+                      id="match-result-summary"
+                      rows={3}
+                      value={matchForm.resultSummary}
+                      onChange={(e) => setMatchForm((f) => ({ ...f, resultSummary: e.target.value }))}
+                      placeholder="Short summary of how the match finished..."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="match-top-performers" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Top Performers
+                    </label>
+                    <textarea
+                      id="match-top-performers"
+                      rows={4}
+                      value={matchForm.topPerformers}
+                      onChange={(e) => setMatchForm((f) => ({ ...f, topPerformers: e.target.value }))}
+                      placeholder={'One performer per line, e.g.\nPlayer Name — 85 (52)\nPlayer Name — 3/24'}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="match-page-content" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Match Page Content
+                    </label>
+                    <textarea
+                      id="match-page-content"
+                      rows={6}
+                      value={matchForm.pageContent}
+                      onChange={(e) => setMatchForm((f) => ({ ...f, pageContent: e.target.value }))}
+                      placeholder="Additional admin-written content shown inside the Match Preview section (plain text or HTML without links)..."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none resize-y"
+                    />
+                  </div>
+                </div>
 
                 <button
                   type="submit"

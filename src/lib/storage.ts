@@ -141,6 +141,10 @@ function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
       countryCodeA: normalizeCountryCode(match.countryCodeA),
       countryCodeB: normalizeCountryCode(match.countryCodeB),
       channelIds: Array.isArray(match.channelIds) ? match.channelIds : [],
+      previewText:
+        typeof match.previewText === 'string' && match.previewText.trim()
+          ? match.previewText.trim()
+          : undefined,
       pageContent: typeof match.pageContent === 'string' ? match.pageContent : '',
       format: typeof match.format === 'string' && match.format.trim() ? match.format.trim() : undefined,
       organizer:
@@ -148,6 +152,10 @@ function normalizeMatches(raw: CricketMatch[]): CricketMatch[] {
           ? match.organizer.trim()
           : undefined,
       result: typeof match.result === 'string' && match.result.trim() ? match.result.trim() : undefined,
+      resultSummary:
+        typeof match.resultSummary === 'string' && match.resultSummary.trim()
+          ? match.resultSummary.trim()
+          : undefined,
       playerOfTheMatch:
         typeof match.playerOfTheMatch === 'string' && match.playerOfTheMatch.trim()
           ? match.playerOfTheMatch.trim()
@@ -861,7 +869,27 @@ interface MatchInput {
   endTime: string;
   status: MatchStatus;
   channelIds: string[];
+  previewText?: string;
+  playingXiTeamA?: string[];
+  playingXiTeamB?: string[];
+  result?: string;
+  resultSummary?: string;
+  topPerformers?: string[];
   pageContent?: string;
+}
+
+function cleanStringLines(list?: string[]): string[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function cleanOptionalText(value?: string): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function validateMatchInput(input: MatchInput): { ok: boolean; error?: string } {
@@ -938,6 +966,9 @@ export async function adminCreateMatch(
   const countryCodeB = isWestIndiesTeam(teamBTrimmed)
     ? undefined
     : normalizeCountryCode(input.countryCodeB);
+  const xiA = cleanStringLines(input.playingXiTeamA);
+  const xiB = cleanStringLines(input.playingXiTeamB);
+  const topPerformers = cleanStringLines(input.topPerformers);
   const match: CricketMatch = {
     id: `match_${Date.now()}_${generateRandomHex(6)}`,
     slug,
@@ -953,6 +984,11 @@ export async function adminCreateMatch(
     endTime: input.endTime,
     status: input.status,
     channelIds: [...input.channelIds],
+    previewText: cleanOptionalText(input.previewText),
+    playingXI: xiA.length > 0 || xiB.length > 0 ? { teamA: xiA, teamB: xiB } : undefined,
+    result: cleanOptionalText(input.result),
+    resultSummary: cleanOptionalText(input.resultSummary),
+    topPerformers: topPerformers.length > 0 ? topPerformers : undefined,
     pageContent: typeof input.pageContent === 'string' ? input.pageContent : '',
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -1009,6 +1045,18 @@ export async function adminUpdateMatch(
   const countryCodeB = isWestIndiesTeam(teamBTrimmed)
     ? undefined
     : normalizeCountryCode(input.countryCodeB);
+  const hasXiInput = input.playingXiTeamA !== undefined || input.playingXiTeamB !== undefined;
+  const xiA = hasXiInput
+    ? cleanStringLines(input.playingXiTeamA)
+    : cleanStringLines(target.playingXI?.teamA ?? target.playingXiTeamA);
+  const xiB = hasXiInput
+    ? cleanStringLines(input.playingXiTeamB)
+    : cleanStringLines(target.playingXI?.teamB ?? target.playingXiTeamB);
+  const nextTopPerformers =
+    input.topPerformers !== undefined
+      ? cleanStringLines(input.topPerformers)
+      : target.topPerformers;
+
   const updated: CricketMatch = {
     ...target,
     slug,
@@ -1024,6 +1072,20 @@ export async function adminUpdateMatch(
     endTime: input.endTime,
     status: input.status,
     channelIds: [...input.channelIds],
+    previewText:
+      input.previewText !== undefined ? cleanOptionalText(input.previewText) : target.previewText,
+    playingXI: xiA.length > 0 || xiB.length > 0 ? { teamA: xiA, teamB: xiB } : undefined,
+    playingXiTeamA: undefined,
+    playingXiTeamB: undefined,
+    result: input.result !== undefined ? cleanOptionalText(input.result) : target.result,
+    resultSummary:
+      input.resultSummary !== undefined
+        ? cleanOptionalText(input.resultSummary)
+        : target.resultSummary,
+    topPerformers:
+      Array.isArray(nextTopPerformers) && nextTopPerformers.length > 0
+        ? nextTopPerformers
+        : undefined,
     pageContent:
       input.pageContent !== undefined
         ? input.pageContent

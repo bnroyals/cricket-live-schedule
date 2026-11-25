@@ -434,6 +434,16 @@ export function MatchPage({
           Match Preview
         </h2>
         <div className="mt-4 space-y-3.5 text-sm sm:text-[15px] text-slate-700 leading-relaxed">
+          {match.previewText &&
+            match.previewText
+              .split(/\n\s*\n/)
+              .map((block) => block.trim())
+              .filter(Boolean)
+              .map((block, idx) => (
+                <p key={`custom-preview-${idx}`} className="whitespace-pre-line">
+                  {block}
+                </p>
+              ))}
           {previewParagraphs.map((paragraph, idx) => (
             <p key={idx}>{paragraph}</p>
           ))}
@@ -535,6 +545,11 @@ export function MatchPage({
             <div className="mt-4 space-y-4 text-sm text-slate-700">
               {resultInfo.resultText && (
                 <p className="text-base font-bold text-slate-900">{resultInfo.resultText}</p>
+              )}
+              {resultInfo.resultSummary && (
+                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                  {resultInfo.resultSummary}
+                </p>
               )}
               {resultInfo.playerOfTheMatch && (
                 <p>
