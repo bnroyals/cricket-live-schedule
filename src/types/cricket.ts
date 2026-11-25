@@ -2,9 +2,13 @@ export type MatchStatus = 'Upcoming' | 'LIVE' | 'Finished';
 
 export interface Channel {
   id: string;
+  /** Complete raw HTML defining the channel page (source of truth). */
+  html?: string;
+  /** Display name parsed from html (data-channel-name / <h1>) or legacy field. */
   name: string;
-  language: string;
-  streamUrl: string;
+  /** Legacy fields kept optional for read-time fallback on unmigrated docs. */
+  language?: string;
+  streamUrl?: string;
   pageContent?: string;
   createdAt: string;
   updatedAt: string;

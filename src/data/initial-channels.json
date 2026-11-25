@@ -2,37 +2,31 @@
   {
     "id": "sony-sports-ten-one",
     "name": "Sony Sports Ten 1",
-    "language": "English",
-    "streamUrl": "https://zlive.st/watch/auto-sony-sports-network"
+    "html": "<div data-channel-name=\"Sony Sports Ten 1\">\n  <h1>Sony Sports Ten 1</h1>\n  <div style=\"position:relative;width:100%;aspect-ratio:16/9;background:#020617;border-radius:12px;overflow:hidden;\">\n    <iframe src=\"https://zlive.st/watch/auto-sony-sports-network\" title=\"Sony Sports Ten 1 Live Stream\" style=\"width:100%;height:100%;border:0;margin:0;border-radius:0;\" allow=\"autoplay *; fullscreen *; encrypted-media *; picture-in-picture *\" allowfullscreen referrerpolicy=\"no-referrer\"></iframe>\n  </div>\n</div>"
   },
   {
     "id": "sony-sports-ten-three",
     "name": "Sony Sports Ten 3",
-    "language": "Hindi",
-    "streamUrl": "https://zlive.st/watch/auto-sony-sports-network-3"
+    "html": "<div data-channel-name=\"Sony Sports Ten 3\">\n  <h1>Sony Sports Ten 3</h1>\n  <div style=\"position:relative;width:100%;aspect-ratio:16/9;background:#020617;border-radius:12px;overflow:hidden;\">\n    <iframe src=\"https://zlive.st/watch/auto-sony-sports-network-3\" title=\"Sony Sports Ten 3 Live Stream\" style=\"width:100%;height:100%;border:0;margin:0;border-radius:0;\" allow=\"autoplay *; fullscreen *; encrypted-media *; picture-in-picture *\" allowfullscreen referrerpolicy=\"no-referrer\"></iframe>\n  </div>\n</div>"
   },
   {
     "id": "willow-cricket",
     "name": "Willow Cricket",
-    "language": "English",
-    "streamUrl": "https://pijirege.st/event/willow-m"
+    "html": "<div data-channel-name=\"Willow Cricket\">\n  <h1>Willow Cricket</h1>\n  <div style=\"position:relative;width:100%;aspect-ratio:16/9;background:#020617;border-radius:12px;overflow:hidden;\">\n    <iframe src=\"https://pijirege.st/event/willow-m\" title=\"Willow Cricket Live Stream\" style=\"width:100%;height:100%;border:0;margin:0;border-radius:0;\" allow=\"autoplay *; fullscreen *; encrypted-media *; picture-in-picture *\" allowfullscreen referrerpolicy=\"no-referrer\"></iframe>\n  </div>\n</div>"
   },
   {
     "id": "ptv-sports",
     "name": "PTV Sports",
-    "language": "English",
-    "streamUrl": ""
+    "html": "<div data-channel-name=\"PTV Sports\">\n  <h1>PTV Sports</h1>\n  <p>Stream currently unavailable for PTV Sports. Please check back later.</p>\n</div>"
   },
   {
     "id": "willow-hd",
     "name": "Willow HD",
-    "language": "English",
-    "streamUrl": "https://zlive.st/watch/auto-willow-cricket-2"
+    "html": "<div data-channel-name=\"Willow HD\">\n  <h1>Willow HD</h1>\n  <div style=\"position:relative;width:100%;aspect-ratio:16/9;background:#020617;border-radius:12px;overflow:hidden;\">\n    <iframe src=\"https://zlive.st/watch/auto-willow-cricket-2\" title=\"Willow HD Live Stream\" style=\"width:100%;height:100%;border:0;margin:0;border-radius:0;\" allow=\"autoplay *; fullscreen *; encrypted-media *; picture-in-picture *\" allowfullscreen referrerpolicy=\"no-referrer\"></iframe>\n  </div>\n</div>"
   },
   {
     "id": "channel-hd",
     "name": "Channel HD",
-    "language": "English",
-    "streamUrl": ""
+    "html": "<div data-channel-name=\"Channel HD\">\n  <h1>Channel HD</h1>\n  <p>Stream currently unavailable for Channel HD. Please check back later.</p>\n</div>"
   }
 ]

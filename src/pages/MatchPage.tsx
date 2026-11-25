@@ -2,7 +2,7 @@ import { ArrowLeft, Calendar, Clock, MapPin, Play } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
-import { getSafeEmbedUrl } from '../lib/security';
+import { channelHasPlayableEmbed, getChannelDisplayName } from '../lib/channelHtml';
 import {
   formatDisplayDate,
   formatIstTime,
@@ -73,12 +73,13 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
   const minutesUntilAutoDelete = Math.max(0, Math.ceil((expiryMs - nowMs) / 60000));
 
   // Strict match-only channel resolution: ONLY channels assigned to THIS match
-  // that have a valid playable stream URL. Never fall back to unrelated channels.
+  // whose HTML contains a playable embed (or valid legacy streamUrl).
   const playableAssignedChannels = match.channelIds
     .map((id) => channels.find((c) => c.id === id))
-    .filter((c): c is Channel => c !== undefined && Boolean(getSafeEmbedUrl(c.streamUrl)));
+    .filter((c): c is Channel => c !== undefined && channelHasPlayableEmbed(c));
 
   const primaryChannel = playableAssignedChannels[0] ?? null;
+  const primaryChannelName = primaryChannel ? getChannelDisplayName(primaryChannel) : '';
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
@@ -240,8 +241,9 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
                   className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-400 text-left transition-colors min-h-[48px]"
                 >
                   <div className="min-w-0">
-                    <span className="block text-sm font-bold text-slate-900 truncate">{ch.name}</span>
-                    <span className="block text-xs text-slate-600">{ch.language}</span>
+                    <span className="block text-sm font-bold text-slate-900 truncate">
+                      {getChannelDisplayName(ch)}
+                    </span>
                   </div>
                   <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 shrink-0">
                     <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
@@ -262,7 +264,7 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
               className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             >
               <Play className="w-5 h-5 fill-current" aria-hidden="true" />
-              <span>Watch Live on {primaryChannel.name}</span>
+              <span>Watch Live on {primaryChannelName}</span>
             </button>
           </div>
         )}

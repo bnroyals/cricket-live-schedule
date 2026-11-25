@@ -32,9 +32,13 @@ import {
   generateCleanSlug,
   generateRandomHex,
   validateSafeText,
-  validateStreamUrl,
   validateStrongPassword,
 } from './security';
+import {
+  buildChannelHtmlFromLegacy,
+  getChannelHtml,
+  parseChannelNameFromHtml,
+} from './channelHtml';
 import { isMatchExpired } from './time';
 import { isValidCountryCode, isWestIndiesTeam, normalizeCountryCode } from './countries';
 import { resolveBackfillCountryCode } from './teamFlags';
@@ -150,12 +154,15 @@ function normalizeChannels(raw: Channel[]): Channel[] {
   const unique = new Map<string, Channel>();
   raw.forEach((channel) => {
     if (channel && channel.id && !unique.has(channel.id)) {
+      const html = getChannelHtml(channel);
+      const name = parseChannelNameFromHtml(html, channel.name || channel.id);
       unique.set(channel.id, {
         ...channel,
-        name: typeof channel.name === 'string' ? channel.name : '',
-        language: typeof channel.language === 'string' ? channel.language : '',
-        streamUrl: typeof channel.streamUrl === 'string' ? channel.streamUrl : '',
-        pageContent: typeof channel.pageContent === 'string' ? channel.pageContent : '',
+        html,
+        name,
+        language: typeof channel.language === 'string' ? channel.language : undefined,
+        streamUrl: typeof channel.streamUrl === 'string' ? channel.streamUrl : undefined,
+        pageContent: typeof channel.pageContent === 'string' ? channel.pageContent : undefined,
       });
     }
   });
@@ -359,7 +366,10 @@ export function subscribeToLiveChannels(
 /**
  * One-time Firestore seed for initial channels ONLY when the Firestore channels
  * collection is completely empty and the authorized admin is signed in.
- * Never seeds matches and NEVER overwrites or modifies existing Firestore documents.
+ * If channels already exist in Firestore, performs a one-time non-destructive
+ * migration of any legacy channel doc lacking `html` into pure HTML using its
+ * own live Firestore fields (name, streamUrl, pageContent). Never overwrites
+ * any channel that already has saved HTML.
  */
 export async function ensureSeedData(): Promise<void> {
   cleanupLegacyLocalStorage();
@@ -372,20 +382,54 @@ export async function ensureSeedData(): Promise<void> {
   try {
     const db = getFirestoreDb();
     const channelSnap = await getDocs(collection(db, 'channels'));
+    const nowIso = new Date().toISOString();
+
     if (!channelSnap.empty) {
-      // Channels already exist in Firestore — never overwrite admin-managed data.
+      // Non-destructively migrate only legacy channel docs that do not have `html` yet.
+      const batch = writeBatch(db);
+      let migratedCount = 0;
+      channelSnap.docs.forEach((docSnap) => {
+        const data = docSnap.data() as Partial<Channel>;
+        const existingHtml = typeof data.html === 'string' ? data.html.trim() : '';
+        if (!existingHtml) {
+          const generatedHtml = buildChannelHtmlFromLegacy({
+            name: typeof data.name === 'string' ? data.name : docSnap.id,
+            language: typeof data.language === 'string' ? data.language : '',
+            streamUrl: typeof data.streamUrl === 'string' ? data.streamUrl : '',
+            pageContent: typeof data.pageContent === 'string' ? data.pageContent : '',
+          });
+          const resolvedName = parseChannelNameFromHtml(
+            generatedHtml,
+            typeof data.name === 'string' ? data.name : docSnap.id
+          );
+          batch.set(
+            doc(db, 'channels', docSnap.id),
+            {
+              html: generatedHtml,
+              name: resolvedName,
+              updatedAt: nowIso,
+            },
+            { merge: true }
+          );
+          migratedCount += 1;
+        }
+      });
+      if (migratedCount > 0) {
+        await batch.commit();
+      }
       return;
     }
+
     const { default: initialChannels } = await import('../data/initial-channels.json');
-    const nowIso = new Date().toISOString();
     const batch = writeBatch(db);
     initialChannels.forEach((item, index) => {
       const createdAt = new Date(Date.parse(nowIso) + index).toISOString();
+      const html = typeof item.html === 'string' ? item.html : buildChannelHtmlFromLegacy(item);
+      const name = parseChannelNameFromHtml(html, item.name || item.id);
       const channel: Channel = {
         id: item.id,
-        name: item.name,
-        language: item.language,
-        streamUrl: item.streamUrl,
+        name,
+        html,
         createdAt,
         updatedAt: nowIso,
       };
@@ -1093,20 +1137,41 @@ export async function adminDeleteMatch(
 }
 
 interface ChannelInput {
-  name: string;
-  language: string;
-  streamUrl: string;
-  pageContent?: string;
+  html: string;
 }
 
-function validateChannelInput(input: ChannelInput): { ok: boolean; error?: string } {
-  const name = validateSafeText(input.name, 'Channel Name', { required: true, maxLength: 60 });
-  if (!name.valid) return { ok: false, error: name.error };
-  const language = validateSafeText(input.language, 'Language', { required: true, maxLength: 40 });
-  if (!language.valid) return { ok: false, error: language.error };
-  const url = validateStreamUrl(input.streamUrl);
-  if (!url.valid) return { ok: false, error: url.error };
-  return { ok: true };
+function generateChannelIdFromName(name: string, existingIds: string[]): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  const taken = new Set(existingIds.map((id) => id.toLowerCase()));
+  if (base && !taken.has(base)) {
+    return base;
+  }
+  return `${base || 'channel'}-${generateRandomHex(4)}`;
+}
+
+function validateChannelInput(
+  input: ChannelInput
+): { ok: boolean; html?: string; name?: string; error?: string } {
+  const html = typeof input.html === 'string' ? input.html.trim() : '';
+  if (!html) {
+    return { ok: false, error: 'Channel HTML code is required.' };
+  }
+  const parsedName = parseChannelNameFromHtml(html);
+  if (!parsedName) {
+    return {
+      ok: false,
+      error:
+        'Include a channel name in the HTML using data-channel-name="Channel Name" (e.g. <div data-channel-name="Willow Cricket">) or an <h1> heading.',
+    };
+  }
+  if (parsedName.length > 80) {
+    return { ok: false, error: 'Parsed channel name must be 80 characters or fewer.' };
+  }
+  return { ok: true, html, name: parsedName };
 }
 
 export async function adminCreateChannel(
@@ -1122,16 +1187,18 @@ export async function adminCreateChannel(
     };
   }
   const validation = validateChannelInput(input);
-  if (!validation.ok) {
+  if (!validation.ok || !validation.html || !validation.name) {
     return { ok: false, error: validation.error };
   }
   const nowIso = new Date().toISOString();
+  const id = generateChannelIdFromName(
+    validation.name,
+    liveChannels.map((c) => c.id)
+  );
   const channel: Channel = {
-    id: `channel_${Date.now()}_${generateRandomHex(6)}`,
-    name: input.name.trim(),
-    language: input.language.trim(),
-    streamUrl: input.streamUrl.trim(),
-    pageContent: typeof input.pageContent === 'string' ? input.pageContent : '',
+    id,
+    name: validation.name,
+    html: validation.html,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -1140,7 +1207,7 @@ export async function adminCreateChannel(
   } catch {
     return { ok: false, error: 'Failed to save channel to Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_CREATED', channel.name, AUTHORIZED_ADMIN_EMAIL, `${channel.language} channel`);
+  appendAuditLog('CHANNEL_CREATED', channel.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${channel.id}`);
   return { ok: true, channel };
 }
 
@@ -1158,7 +1225,7 @@ export async function adminUpdateChannel(
     };
   }
   const validation = validateChannelInput(input);
-  if (!validation.ok) {
+  if (!validation.ok || !validation.html || !validation.name) {
     return { ok: false, error: validation.error };
   }
   const target = liveChannels.find((channel) => channel.id === channelId);
@@ -1166,14 +1233,10 @@ export async function adminUpdateChannel(
     return { ok: false, error: 'Channel not found.' };
   }
   const updated: Channel = {
-    ...target,
-    name: input.name.trim(),
-    language: input.language.trim(),
-    streamUrl: input.streamUrl.trim(),
-    pageContent:
-      input.pageContent !== undefined
-        ? input.pageContent
-        : (target.pageContent ?? ''),
+    id: target.id,
+    name: validation.name,
+    html: validation.html,
+    createdAt: target.createdAt,
     updatedAt: new Date().toISOString(),
   };
   try {
@@ -1181,7 +1244,7 @@ export async function adminUpdateChannel(
   } catch {
     return { ok: false, error: 'Failed to update channel in Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_UPDATED', updated.name, AUTHORIZED_ADMIN_EMAIL, `${updated.language} channel`);
+  appendAuditLog('CHANNEL_UPDATED', updated.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${updated.id}`);
   return { ok: true, channel: updated };
 }
 
@@ -1219,6 +1282,6 @@ export async function adminDeleteChannel(
   } catch {
     return { ok: false, error: 'Failed to delete channel from Firestore. Check your connection and try again.' };
   }
-  appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `${target.language} channel`);
+  appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `/watch/${target.id}`);
   return { ok: true };
 }

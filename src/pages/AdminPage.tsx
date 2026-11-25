@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
+  Code2,
   Edit3,
   Eye,
   EyeOff,
@@ -59,6 +60,11 @@ import {
 } from '../lib/time';
 import { useNavigate } from '../lib/router';
 import { RichTextEditor } from '../components/RichTextEditor';
+import {
+  getChannelDisplayName,
+  getChannelHtml,
+  parseChannelNameFromHtml,
+} from '../lib/channelHtml';
 
 interface AdminPageProps {
   matches: CricketMatch[];
@@ -87,10 +93,7 @@ function createEmptyMatchForm() {
 }
 
 const EMPTY_CHANNEL_FORM = {
-  name: '',
-  language: 'English',
-  streamUrl: '',
-  pageContent: '',
+  html: '',
 };
 
 export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) {
@@ -451,8 +454,8 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
       setFeedback({
         type: 'success',
         text: editingChannelId
-          ? `Channel updated: ${res.channel.name} (${res.channel.language})`
-          : `Channel added: ${res.channel.name} (${res.channel.language})`,
+          ? `Channel updated: ${res.channel.name}`
+          : `Channel added: ${res.channel.name}`,
       });
       setEditingChannelId(null);
       setChannelForm(EMPTY_CHANNEL_FORM);
@@ -471,10 +474,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
   const startEditChannel = (ch: Channel) => {
     setEditingChannelId(ch.id);
     setChannelForm({
-      name: ch.name,
-      language: ch.language,
-      streamUrl: ch.streamUrl,
-      pageContent: ch.pageContent ?? '',
+      html: getChannelHtml(ch),
     });
     setFeedback(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1097,7 +1097,7 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
                             onChange={() => toggleMatchChannel(ch.id)}
                             className="accent-emerald-700"
                           />
-                          <span className="truncate">{ch.name}</span>
+                          <span className="truncate">{getChannelDisplayName(ch)}</span>
                         </label>
                       );
                     })}
@@ -1245,173 +1245,190 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
         {/* ================================================================ */}
         {/* CHANNELS TAB */}
         {/* ================================================================ */}
-        {activeTab === 'channels' && (
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <section className="lg:col-span-5 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="font-display text-2xl font-bold text-slate-900">
-                  {editingChannelId ? 'Edit Channel' : 'Add Channel'}
-                </h2>
-                {editingChannelId && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingChannelId(null);
-                      setChannelForm(EMPTY_CHANNEL_FORM);
-                    }}
-                    className="text-xs font-semibold text-slate-600 hover:text-slate-900"
-                  >
-                    Cancel Edit
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-slate-600 mt-1">
-                Channels on <span className="font-mono-tabular font-semibold text-slate-900">/channels</span> are permanent and never auto-delete.
-              </p>
+        {activeTab === 'channels' && (() => {
+          const detectedChannelName = parseChannelNameFromHtml(channelForm.html);
+          const channelHtmlLines = channelForm.html ? channelForm.html.split('\n').length : 1;
 
-              <form onSubmit={handleChannelSubmit} noValidate className="mt-5 space-y-4">
-                <div>
-                  <label htmlFor="ch-name" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Channel Name *
-                  </label>
-                  <input
-                    id="ch-name"
-                    type="text"
-                    maxLength={80}
-                    value={channelForm.name}
-                    onChange={(e) => setChannelForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="e.g. Sony Sports Ten 3"
-                    className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                  />
+          return (
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <section className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-display text-2xl font-bold text-slate-900">
+                    {editingChannelId ? 'Edit Channel HTML' : 'Add Channel HTML'}
+                  </h2>
+                  {editingChannelId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingChannelId(null);
+                        setChannelForm(EMPTY_CHANNEL_FORM);
+                      }}
+                      className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
                 </div>
 
-                <div>
-                  <label htmlFor="ch-lang" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Language *
-                  </label>
-                  <input
-                    id="ch-lang"
-                    type="text"
-                    maxLength={40}
-                    value={channelForm.language}
-                    onChange={(e) => setChannelForm((f) => ({ ...f, language: e.target.value }))}
-                    placeholder="e.g. English or Hindi"
-                    className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                  />
-                </div>
+                <form onSubmit={handleChannelSubmit} noValidate className="mt-4 space-y-4">
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="channel-raw-html"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700"
+                      >
+                        <Code2 className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
+                        <span>Channel HTML Code *</span>
+                      </label>
 
-                <div>
-                  <label htmlFor="ch-url" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Embeddable Stream URL (https:// or leave blank)
-                  </label>
-                  <input
-                    id="ch-url"
-                    type="url"
-                    maxLength={500}
-                    value={channelForm.streamUrl}
-                    onChange={(e) => setChannelForm((f) => ({ ...f, streamUrl: e.target.value }))}
-                    placeholder="https://example.com/embed-player"
-                    className="w-full min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
-                  />
-                </div>
-
-                {/* Channel Page Content — Blogger-style WYSIWYG Editor */}
-                <RichTextEditor
-                  id="channel-page-content"
-                  label="Page Content"
-                  value={channelForm.pageContent}
-                  onChange={(html) => setChannelForm((f) => ({ ...f, pageContent: html }))}
-                  placeholder="Write channel notes, schedule highlights, links, or images..."
-                />
-
-                <button
-                  type="submit"
-                  disabled={channelSubmitting}
-                  className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Plus className="w-4 h-4" aria-hidden="true" />
-                  <span>
-                    {channelSubmitting
-                      ? 'Saving...'
-                      : editingChannelId
-                        ? 'Save Channel Changes'
-                        : 'Add Channel'}
-                  </span>
-                </button>
-              </form>
-            </section>
-
-            <section className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-200">
-                <h2 className="font-display text-2xl font-bold text-slate-900">
-                  Permanent Channels
-                </h2>
-                <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
-                  {channels.length} total
-                </span>
-              </div>
-
-              <div className="divide-y divide-slate-200 mt-2">
-                {channels.map((ch) => {
-                  const confirming = confirmDeleteChannelId === ch.id;
-                  return (
-                    <div key={ch.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="min-w-0">
-                        <h3 className="text-base font-bold text-slate-900">{ch.name}</h3>
-                        <p className="text-xs text-slate-600 mt-0.5 truncate">
-                          <span className="font-semibold text-slate-800">{ch.language}</span>
-                          <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
-                          <span className={ch.streamUrl ? 'text-emerald-700 font-medium' : 'text-amber-700'}>
-                            {ch.streamUrl ? ch.streamUrl : 'No stream URL set'}
-                          </span>
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => startEditChannel(ch)}
-                          className="min-h-[40px] px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5 transition-colors"
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono-tabular">
+                        <span
+                          className={
+                            detectedChannelName
+                              ? 'text-emerald-700 font-semibold font-sans'
+                              : 'text-amber-700 font-medium font-sans'
+                          }
                         >
-                          <Edit3 className="w-3.5 h-3.5" aria-hidden="true" />
-                          <span>Edit</span>
-                        </button>
-
-                        {confirming ? (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteChannel(ch.id)}
-                              className="min-h-[40px] px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-xs font-bold text-white transition-colors"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteChannelId(null)}
-                              className="min-h-[40px] px-2.5 py-2 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteChannelId(ch.id)}
-                            className="min-h-[40px] px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-xs font-semibold text-red-700 inline-flex items-center gap-1.5 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                            <span>Delete</span>
-                          </button>
-                        )}
+                          {detectedChannelName
+                            ? `Name: ${detectedChannelName}`
+                            : 'No name detected yet'}
+                        </span>
+                        <span className="text-slate-500">
+                          {channelHtmlLines} {channelHtmlLines === 1 ? 'line' : 'lines'} · {channelForm.html.length} chars
+                        </span>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          </div>
-        )}
+
+                    <textarea
+                      id="channel-raw-html"
+                      value={channelForm.html}
+                      onChange={(e) => setChannelForm({ html: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Tab') {
+                          e.preventDefault();
+                          const target = e.currentTarget;
+                          const start = target.selectionStart;
+                          const end = target.selectionEnd;
+                          const nextValue = `${channelForm.html.slice(0, start)}  ${channelForm.html.slice(end)}`;
+                          setChannelForm({ html: nextValue });
+                          window.requestAnimationFrame(() => {
+                            target.selectionStart = start + 2;
+                            target.selectionEnd = start + 2;
+                          });
+                        }
+                      }}
+                      placeholder={`<div data-channel-name="Willow Cricket">\n  <h1>Willow Cricket</h1>\n  <div style="position:relative;width:100%;aspect-ratio:16/9;background:#020617;border-radius:12px;overflow:hidden;">\n    <iframe src="https://example.com/embed" style="width:100%;height:100%;border:0;margin:0;border-radius:0;" allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen referrerpolicy="no-referrer"></iframe>\n  </div>\n</div>`}
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      rows={18}
+                      className="block w-full min-h-[420px] p-4 rounded-xl bg-white border border-slate-300 text-slate-900 font-mono-tabular text-xs sm:text-sm leading-relaxed focus:border-emerald-600 focus:outline-none resize-y placeholder:text-slate-400"
+                    />
+
+                    {/* Convention note for setting the channel name in HTML */}
+                    <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                      Set the channel name shown on match page Watch buttons using{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-900 font-mono-tabular text-[11px]">
+                        data-channel-name=&quot;Channel Name&quot;
+                      </code>{' '}
+                      (for example{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-900 font-mono-tabular text-[11px]">
+                        &lt;div data-channel-name=&quot;Willow Cricket&quot;&gt;
+                      </code>
+                      ), or an{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-900 font-mono-tabular text-[11px]">
+                        &lt;h1&gt;
+                      </code>{' '}
+                      heading as fallback. Everything on the channel page renders directly from this HTML.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={channelSubmitting}
+                    className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" aria-hidden="true" />
+                    <span>
+                      {channelSubmitting
+                        ? 'Saving...'
+                        : editingChannelId
+                          ? 'Save Channel HTML'
+                          : 'Add Channel'}
+                    </span>
+                  </button>
+                </form>
+              </section>
+
+              <section className="lg:col-span-5 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+                  <h2 className="font-display text-2xl font-bold text-slate-900">
+                    Permanent Channels
+                  </h2>
+                  <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
+                    {channels.length} total
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-200 mt-2">
+                  {channels.map((ch) => {
+                    const confirming = confirmDeleteChannelId === ch.id;
+                    const displayName = getChannelDisplayName(ch);
+                    return (
+                      <div key={ch.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <h3 className="text-base font-bold text-slate-900 truncate">{displayName}</h3>
+                          <p className="text-xs text-slate-500 mt-0.5 font-mono-tabular truncate">
+                            /watch/{ch.id}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => startEditChannel(ch)}
+                            className="min-h-[40px] px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5 transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>Edit</span>
+                          </button>
+
+                          {confirming ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteChannel(ch.id)}
+                                className="min-h-[40px] px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-xs font-bold text-white transition-colors"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteChannelId(null)}
+                                className="min-h-[40px] px-2.5 py-2 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteChannelId(ch.id)}
+                              className="min-h-[40px] px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-xs font-semibold text-red-700 inline-flex items-center gap-1.5 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                              <span>Delete</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+          );
+        })()}
 
         {/* ================================================================ */}
         {/* AUDIT LOG TAB (Admin-only visibility, synced with Firestore) */}
