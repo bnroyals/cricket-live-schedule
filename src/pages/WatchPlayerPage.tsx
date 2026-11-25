@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Maximize,
@@ -7,8 +7,6 @@ import {
   Play,
   Radio,
   Tv,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 import type { Channel } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
@@ -23,7 +21,7 @@ interface WatchPlayerPageProps {
   loading?: boolean;
 }
 
-type PlayerCommand = 'play' | 'pause' | 'unmute' | 'mute';
+type PlayerCommand = 'play' | 'pause';
 
 interface FullscreenElementWithVendor extends HTMLDivElement {
   webkitRequestFullscreen?: () => Promise<void> | void;
@@ -34,47 +32,9 @@ interface FullscreenDocumentWithVendor extends Document {
   webkitExitFullscreen?: () => Promise<void> | void;
 }
 
-const SIGNED_PARAM_NAMES = new Set([
-  'sig',
-  'signature',
-  'hmac',
-  'policy',
-  'key-pair-id',
-  'x-amz-signature',
-]);
-
 /**
- * Builds the playback iframe src for the requested mute state without mutating
- * the stored channel streamUrl. Preserves all existing query parameters and hash;
- * skips adding params if the URL contains a cryptographic signature parameter.
- */
-function buildIframePlaybackUrl(
-  baseUrl: string,
-  muted: boolean,
-  explicitAudioMode: boolean
-): string {
-  if (!explicitAudioMode) {
-    return baseUrl;
-  }
-  try {
-    const parsed = new URL(baseUrl);
-    for (const key of parsed.searchParams.keys()) {
-      if (SIGNED_PARAM_NAMES.has(key.toLowerCase())) {
-        return baseUrl;
-      }
-    }
-    parsed.searchParams.set('autoplay', '1');
-    parsed.searchParams.set('muted', muted ? '1' : '0');
-    parsed.searchParams.set('mute', muted ? '1' : '0');
-    return parsed.toString();
-  } catch {
-    return baseUrl;
-  }
-}
-
-/**
- * Sends standard cross-origin postMessage control payloads supported by common
- * HTML5 / Clappr / JWPlayer / Video.js / Plyr / embed player wrappers.
+ * Sends standard cross-origin postMessage play/pause payloads supported by common
+ * HTML5 / embed player wrappers.
  */
 function dispatchIframeCommand(
   iframe: HTMLIFrameElement | null,
@@ -94,38 +54,15 @@ function dispatchIframeCommand(
           JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
           JSON.stringify({ method: 'play' }),
         ]
-      : command === 'pause'
-        ? [
-            'pause',
-            { action: 'pause' },
-            { command: 'pause' },
-            { method: 'pause' },
-            { type: 'pause' },
-            JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }),
-            JSON.stringify({ method: 'pause' }),
-          ]
-        : command === 'unmute'
-          ? [
-              'unmute',
-              { action: 'unmute' },
-              { command: 'unmute' },
-              { method: 'setMuted', value: false },
-              { method: 'setVolume', value: 1 },
-              { type: 'unmute' },
-              JSON.stringify({ event: 'command', func: 'unMute', args: '' }),
-              JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
-              JSON.stringify({ method: 'setVolume', value: 1 }),
-            ]
-          : [
-              'mute',
-              { action: 'mute' },
-              { command: 'mute' },
-              { method: 'setMuted', value: true },
-              { method: 'setVolume', value: 0 },
-              { type: 'mute' },
-              JSON.stringify({ event: 'command', func: 'mute', args: '' }),
-              JSON.stringify({ method: 'setVolume', value: 0 }),
-            ];
+      : [
+          'pause',
+          { action: 'pause' },
+          { command: 'pause' },
+          { method: 'pause' },
+          { type: 'pause' },
+          JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }),
+          JSON.stringify({ method: 'pause' }),
+        ];
 
   for (const payload of payloads) {
     try {
@@ -149,8 +86,6 @@ export function WatchPlayerPage({
 
   const [shieldActive, setShieldActive] = useState<boolean>(true);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(true);
-  const [audioModeExplicit, setAudioModeExplicit] = useState<boolean>(false);
   const [nativeFullscreen, setNativeFullscreen] = useState<boolean>(false);
   const [fallbackFullscreen, setFallbackFullscreen] = useState<boolean>(false);
   const [streamStarted, setStreamStarted] = useState<boolean>(false);
@@ -167,18 +102,6 @@ export function WatchPlayerPage({
   const embedUrl = channel ? getSafeEmbedUrl(channel.streamUrl) : null;
   const isPlayable = Boolean(embedUrl);
 
-  const iframeSrc = useMemo(() => {
-    if (!embedUrl) return null;
-    return buildIframePlaybackUrl(embedUrl, isMuted, audioModeExplicit);
-  }, [embedUrl, isMuted, audioModeExplicit]);
-
-  // Toggle Permissions Policy autoplay delegation:
-  // - When unmuted: `autoplay *` delegates user-gesture autoplay with sound to the iframe & nested players.
-  // - When muted: `autoplay 'none'` blocks unmuted autoplay so reloading muted reliably returns to muted state.
-  const iframeAllow = isMuted
-    ? "autoplay 'none'; fullscreen *; encrypted-media *; picture-in-picture *"
-    : 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *';
-
   const clearRetryTimers = useCallback(() => {
     for (const timerId of retryTimersRef.current) {
       window.clearTimeout(timerId);
@@ -191,8 +114,6 @@ export function WatchPlayerPage({
     clearRetryTimers();
     setShieldActive(true);
     setIsPlaying(false);
-    setIsMuted(true);
-    setAudioModeExplicit(false);
     setFallbackFullscreen(false);
     setStreamStarted(false);
     setReloadKey(0);
@@ -260,20 +181,17 @@ export function WatchPlayerPage({
     };
   }, [isFullscreen, exitFullscreenNow]);
 
-  const triggerStreamCommands = useCallback(
-    (muted: boolean) => {
-      clearRetryTimers();
-      const sendBatch = () => {
-        dispatchIframeCommand(iframeRef.current, 'play');
-        dispatchIframeCommand(iframeRef.current, muted ? 'mute' : 'unmute');
-      };
-      sendBatch();
-      const t1 = window.setTimeout(sendBatch, 250);
-      const t2 = window.setTimeout(sendBatch, 800);
-      retryTimersRef.current = [t1, t2];
-    },
-    [clearRetryTimers]
-  );
+  const triggerPlayCommands = useCallback(() => {
+    clearRetryTimers();
+    dispatchIframeCommand(iframeRef.current, 'play');
+    const t1 = window.setTimeout(() => {
+      dispatchIframeCommand(iframeRef.current, 'play');
+    }, 250);
+    const t2 = window.setTimeout(() => {
+      dispatchIframeCommand(iframeRef.current, 'play');
+    }, 800);
+    retryTimersRef.current = [t1, t2];
+  }, [clearRetryTimers]);
 
   // Starts/resumes stream on user click gesture and dismisses the click-shield overlay
   const handleStartStream = useCallback(() => {
@@ -281,8 +199,8 @@ export function WatchPlayerPage({
     setStreamStarted(true);
     setIsPlaying(true);
     setShieldActive(false);
-    triggerStreamCommands(isMuted);
-  }, [embedUrl, isMuted, triggerStreamCommands]);
+    triggerPlayCommands();
+  }, [embedUrl, triggerPlayCommands]);
 
   const handleTogglePlay = useCallback(() => {
     if (!embedUrl) return;
@@ -301,20 +219,6 @@ export function WatchPlayerPage({
       setShieldActive(true);
     }
   }, [embedUrl, isPlaying, shieldActive, streamStarted, handleStartStream, clearRetryTimers]);
-
-  // Remounts the unsandboxed iframe directly on the Unmute/Mute click gesture so the
-  // host player starts genuinely unmuted (with sound) or muted again.
-  const handleToggleMute = useCallback(() => {
-    if (!embedUrl) return;
-    const nextMuted = !isMuted;
-    clearRetryTimers();
-    setIsMuted(nextMuted);
-    setAudioModeExplicit(true);
-    setStreamStarted(true);
-    setIsPlaying(true);
-    setShieldActive(false);
-    setReloadKey((k) => k + 1);
-  }, [embedUrl, isMuted, clearRetryTimers]);
 
   const handleToggleFullscreen = useCallback(() => {
     const container = playerContainerRef.current as FullscreenElementWithVendor | null;
@@ -464,21 +368,21 @@ export function WatchPlayerPage({
                 : 'aspect-video rounded-xl border-slate-200'
             }`}
           >
-            {isPlayable && iframeSrc ? (
+            {isPlayable && embedUrl ? (
               <>
                 {/* Unsandboxed stream iframe (NO sandbox attribute, NO allow-popups) */}
                 <iframe
                   ref={iframeRef}
-                  key={`${embedUrl}-${reloadKey}-${isMuted ? 'muted' : 'unmuted'}`}
-                  src={iframeSrc}
+                  key={`${embedUrl}-${reloadKey}`}
+                  src={embedUrl}
                   title={`${channel.name} Live Stream`}
                   className="w-full h-full border-0"
-                  allow={iframeAllow}
+                  allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *"
                   allowFullScreen
                   referrerPolicy="no-referrer"
                   onLoad={() => {
                     if (streamStarted && isPlaying) {
-                      triggerStreamCommands(isMuted);
+                      triggerPlayCommands();
                     }
                   }}
                 />
@@ -552,9 +456,9 @@ export function WatchPlayerPage({
             )}
           </div>
 
-          {/* Three Player Control Buttons Below Video: Play, Unmute, Fullscreen */}
-          {isPlayable && iframeSrc && (
-            <div className="mt-3 sm:mt-4 grid grid-cols-3 gap-2.5 sm:gap-3 shrink-0">
+          {/* Player Control Buttons Below Video: Play/Pause and Fullscreen */}
+          {isPlayable && embedUrl && (
+            <div className="mt-3 sm:mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={handleTogglePlay}
@@ -569,39 +473,6 @@ export function WatchPlayerPage({
                   <>
                     <Play className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
                     <span>Play</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleToggleMute}
-                aria-pressed={!isMuted}
-                className={`inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl border text-sm font-bold transition-all duration-150 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${
-                  isFullscreen
-                    ? isMuted
-                      ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white'
-                      : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-500 text-white'
-                    : isMuted
-                      ? 'bg-white hover:bg-slate-100 border-slate-300 text-slate-900'
-                      : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-400 text-emerald-900'
-                }`}
-              >
-                {isMuted ? (
-                  <>
-                    <Volume2
-                      className={`w-4 h-4 shrink-0 ${isFullscreen ? 'text-emerald-400' : 'text-emerald-700'}`}
-                      aria-hidden="true"
-                    />
-                    <span>Unmute</span>
-                  </>
-                ) : (
-                  <>
-                    <VolumeX
-                      className={`w-4 h-4 shrink-0 ${isFullscreen ? 'text-white' : 'text-slate-600'}`}
-                      aria-hidden="true"
-                    />
-                    <span>Mute</span>
                   </>
                 )}
               </button>
