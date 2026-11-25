@@ -1,4 +1,4 @@
-import { ArrowLeft, Calendar, Clock, MapPin, Play, Tv } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, MapPin, Play } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
@@ -52,7 +52,7 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
           <p className="text-sm text-slate-600 mt-4 max-w-md mx-auto leading-relaxed">
             This match page has expired and been automatically removed 30 minutes after the match end time.
           </p>
-          <div className="mt-7 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <div className="mt-7 flex items-center justify-center">
             <button
               type="button"
               onClick={() => navigate('/')}
@@ -60,14 +60,6 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
             >
               <ArrowLeft className="w-4 h-4" aria-hidden="true" />
               <span>Back to Schedule</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/channels')}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold whitespace-nowrap transition-colors"
-            >
-              <Tv className="w-4 h-4" aria-hidden="true" />
-              <span>Browse Channels</span>
             </button>
           </div>
         </div>
@@ -80,24 +72,13 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
   const expiryMs = getMatchExpiryTimestamp(match);
   const minutesUntilAutoDelete = Math.max(0, Math.ceil((expiryMs - nowMs) / 60000));
 
-  const assignedChannels = match.channelIds
+  // Strict match-only channel resolution: ONLY channels assigned to THIS match
+  // that have a valid playable stream URL. Never fall back to unrelated channels.
+  const playableAssignedChannels = match.channelIds
     .map((id) => channels.find((c) => c.id === id))
-    .filter((c): c is Channel => Boolean(c));
+    .filter((c): c is Channel => c !== undefined && Boolean(getSafeEmbedUrl(c.streamUrl)));
 
-  const primaryChannel =
-    assignedChannels.find((c) => Boolean(getSafeEmbedUrl(c.streamUrl))) ??
-    assignedChannels[0] ??
-    channels.find((c) => Boolean(getSafeEmbedUrl(c.streamUrl))) ??
-    channels[0] ??
-    null;
-
-  const handlePrimaryWatch = () => {
-    if (primaryChannel) {
-      navigate(`/watch/${encodeURIComponent(primaryChannel.id)}`);
-    } else {
-      navigate('/channels');
-    }
-  };
+  const primaryChannel = playableAssignedChannels[0] ?? null;
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
@@ -196,9 +177,11 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
                 <p className="text-lg sm:text-xl font-bold text-red-600">
                   Match is LIVE now
                 </p>
-                <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                  Tap Watch below to open the built-in live broadcast player.
-                </p>
+                {primaryChannel && (
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                    Tap Watch below to open the built-in live broadcast player.
+                  </p>
+                )}
               </div>
             ) : (
               <div>
@@ -242,14 +225,14 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
           </div>
         </dl>
 
-        {/* Broadcast Channels — Clickable In-App Live Player Links */}
-        {assignedChannels.length > 0 && (
+        {/* Additional Playable Channels Assigned to THIS Match Only */}
+        {playableAssignedChannels.length > 1 && (
           <div className="mt-6 pt-6 border-t border-slate-200">
             <p className="text-xs font-medium text-slate-500">
-              Broadcast Channels
+              Watch This Match On
             </p>
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {assignedChannels.map((ch) => (
+              {playableAssignedChannels.map((ch) => (
                 <button
                   key={ch.id}
                   type="button"
@@ -270,28 +253,19 @@ export function MatchPage({ match, channels, nowMs, loading = false }: MatchPage
           </div>
         )}
 
-        {/* Primary Focal CTA — Opens In-App Embedded Live Player */}
-        <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <button
-            type="button"
-            onClick={handlePrimaryWatch}
-            className="flex-1 min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-          >
-            <Play className="w-5 h-5 fill-current" aria-hidden="true" />
-            <span>
-              {primaryChannel ? `Watch Live on ${primaryChannel.name}` : 'Watch Live'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate('/channels')}
-            className="min-h-[52px] px-5 py-3.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-colors"
-          >
-            <Tv className="w-4 h-4" aria-hidden="true" />
-            <span>All Channels</span>
-          </button>
-        </div>
+        {/* Primary Focal CTA — Shown ONLY if this match has a playable assigned channel */}
+        {primaryChannel && (
+          <div className="mt-8 flex items-stretch">
+            <button
+              type="button"
+              onClick={() => navigate(`/watch/${encodeURIComponent(primaryChannel.id)}`)}
+              className="w-full min-h-[52px] px-6 py-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-base font-bold inline-flex items-center justify-center gap-2.5 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+            >
+              <Play className="w-5 h-5 fill-current" aria-hidden="true" />
+              <span>Watch Live on {primaryChannel.name}</span>
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Admin-Authored Rich Match Page Content */}

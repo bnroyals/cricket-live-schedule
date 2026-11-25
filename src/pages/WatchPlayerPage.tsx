@@ -1,4 +1,15 @@
-import { ArrowLeft, Calendar, Play, Radio, Tv } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Maximize,
+  Minimize,
+  Pause,
+  Play,
+  Radio,
+  Tv,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import type { Channel } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
 import { hasPageContent } from '../lib/pageContent';
@@ -12,14 +23,231 @@ interface WatchPlayerPageProps {
   loading?: boolean;
 }
 
-export function WatchPlayerPage({ channelId, channels, loading = false }: WatchPlayerPageProps) {
+type PlayerCommand = 'play' | 'pause' | 'unmute' | 'mute';
+
+interface FullscreenElementWithVendor extends HTMLDivElement {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+}
+
+interface FullscreenDocumentWithVendor extends Document {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+}
+
+/**
+ * Sends standard cross-origin postMessage control payloads supported by common
+ * HTML5 / Clappr / JWPlayer / Video.js / Plyr / embed player wrappers.
+ */
+function dispatchIframeCommand(
+  iframe: HTMLIFrameElement | null,
+  command: PlayerCommand
+): void {
+  const win = iframe?.contentWindow;
+  if (!win) return;
+
+  const payloads: unknown[] =
+    command === 'play'
+      ? [
+          'play',
+          { action: 'play' },
+          { command: 'play' },
+          { method: 'play' },
+          { type: 'play' },
+          JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
+          JSON.stringify({ method: 'play' }),
+        ]
+      : command === 'pause'
+        ? [
+            'pause',
+            { action: 'pause' },
+            { command: 'pause' },
+            { method: 'pause' },
+            { type: 'pause' },
+            JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }),
+            JSON.stringify({ method: 'pause' }),
+          ]
+        : command === 'unmute'
+          ? [
+              'unmute',
+              { action: 'unmute' },
+              { command: 'unmute' },
+              { method: 'setMuted', value: false },
+              { method: 'setVolume', value: 1 },
+              { type: 'unmute' },
+              JSON.stringify({ event: 'command', func: 'unMute', args: '' }),
+              JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
+              JSON.stringify({ method: 'setVolume', value: 1 }),
+            ]
+          : [
+              'mute',
+              { action: 'mute' },
+              { command: 'mute' },
+              { method: 'setMuted', value: true },
+              { method: 'setVolume', value: 0 },
+              { type: 'mute' },
+              JSON.stringify({ event: 'command', func: 'mute', args: '' }),
+              JSON.stringify({ method: 'setVolume', value: 0 }),
+            ];
+
+  for (const payload of payloads) {
+    try {
+      win.postMessage(payload, '*');
+    } catch {
+      // Ignore postMessage restriction if frame is navigating
+    }
+  }
+}
+
+export function WatchPlayerPage({
+  channelId,
+  channels,
+  loading = false,
+}: WatchPlayerPageProps) {
   const navigate = useNavigate();
+
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const retryTimersRef = useRef<number[]>([]);
+
+  const [shieldActive, setShieldActive] = useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [streamStarted, setStreamStarted] = useState<boolean>(false);
+  const [reloadKey, setReloadKey] = useState<number>(0);
 
   const normalizedId = channelId.trim().toLowerCase();
   const channel =
     channels.find((c) => c.id.toLowerCase() === normalizedId) ??
     channels.find((c) => c.name.trim().toLowerCase() === normalizedId) ??
     null;
+
+  const embedUrl = channel ? getSafeEmbedUrl(channel.streamUrl) : null;
+  const isPlayable = Boolean(embedUrl);
+
+  const clearRetryTimers = useCallback(() => {
+    for (const timerId of retryTimersRef.current) {
+      window.clearTimeout(timerId);
+    }
+    retryTimersRef.current = [];
+  }, []);
+
+  // Reset player shield & control state when channel or stream URL changes
+  useEffect(() => {
+    clearRetryTimers();
+    setShieldActive(true);
+    setIsPlaying(false);
+    setIsMuted(true);
+    setStreamStarted(false);
+    setReloadKey(0);
+  }, [channelId, embedUrl, clearRetryTimers]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      clearRetryTimers();
+    };
+  }, [clearRetryTimers]);
+
+  // Sync fullscreen button state with native Fullscreen API events
+  useEffect(() => {
+    const syncFullscreen = () => {
+      const doc = document as FullscreenDocumentWithVendor;
+      const activeEl = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+      setIsFullscreen(Boolean(activeEl));
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    document.addEventListener('webkitfullscreenchange', syncFullscreen);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreen);
+    };
+  }, []);
+
+  const triggerStreamPlayCommands = useCallback(() => {
+    clearRetryTimers();
+    dispatchIframeCommand(iframeRef.current, 'play');
+    const t1 = window.setTimeout(() => {
+      dispatchIframeCommand(iframeRef.current, 'play');
+    }, 200);
+    const t2 = window.setTimeout(() => {
+      dispatchIframeCommand(iframeRef.current, 'play');
+    }, 700);
+    retryTimersRef.current = [t1, t2];
+  }, [clearRetryTimers]);
+
+  // Starts/resumes stream on user click gesture and manages the click-shield overlay
+  const handleStartStream = useCallback(() => {
+    if (!embedUrl) return;
+    setStreamStarted(true);
+    setIsPlaying(true);
+    setShieldActive(false);
+
+    // Focus the unsandboxed iframe and issue play commands on the user gesture
+    try {
+      iframeRef.current?.focus();
+    } catch {
+      // Ignore focus errors
+    }
+    triggerStreamPlayCommands();
+  }, [embedUrl, triggerStreamPlayCommands]);
+
+  const handleTogglePlay = useCallback(() => {
+    if (!embedUrl) return;
+
+    if (!isPlaying || shieldActive) {
+      // If previously paused, reload stream cleanly on user gesture to guarantee start
+      if (streamStarted && !isPlaying) {
+        setReloadKey((k) => k + 1);
+      }
+      handleStartStream();
+    } else {
+      clearRetryTimers();
+      dispatchIframeCommand(iframeRef.current, 'pause');
+      setIsPlaying(false);
+      // Re-arm click-shield while paused so stray clicks cannot trigger host popups
+      setShieldActive(true);
+    }
+  }, [embedUrl, isPlaying, shieldActive, streamStarted, handleStartStream, clearRetryTimers]);
+
+  const handleToggleMute = useCallback(() => {
+    if (!embedUrl) return;
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+
+    // If user clicks Unmute before starting playback, also start the player cleanly
+    if (!nextMuted && !streamStarted) {
+      setStreamStarted(true);
+      setIsPlaying(true);
+      setShieldActive(false);
+      triggerStreamPlayCommands();
+    }
+
+    dispatchIframeCommand(iframeRef.current, nextMuted ? 'mute' : 'unmute');
+  }, [embedUrl, isMuted, streamStarted, triggerStreamPlayCommands]);
+
+  const handleToggleFullscreen = useCallback(() => {
+    const container = playerContainerRef.current as FullscreenElementWithVendor | null;
+    const doc = document as FullscreenDocumentWithVendor;
+    if (!container) return;
+
+    const currentFs = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+    if (currentFs) {
+      if (typeof doc.exitFullscreen === 'function') {
+        void doc.exitFullscreen();
+      } else if (typeof doc.webkitExitFullscreen === 'function') {
+        void doc.webkitExitFullscreen();
+      }
+      return;
+    }
+
+    if (typeof container.requestFullscreen === 'function') {
+      void container.requestFullscreen();
+    } else if (typeof container.webkitRequestFullscreen === 'function') {
+      void container.webkitRequestFullscreen();
+    }
+  }, []);
 
   if (loading && !channel) {
     return (
@@ -46,24 +274,16 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
             Channel Not Found
           </h1>
           <p className="text-sm text-slate-600 mt-3 max-w-md mx-auto leading-relaxed">
-            The requested broadcast channel does not exist or has been removed. Choose an available live channel below.
+            The requested broadcast channel does not exist or has been removed.
           </p>
-          <div className="mt-7 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => navigate('/channels')}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold whitespace-nowrap transition-colors"
-            >
-              <Tv className="w-4 h-4" aria-hidden="true" />
-              <span>Browse Channels</span>
-            </button>
+          <div className="mt-7 flex items-center justify-center">
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-sm font-bold whitespace-nowrap transition-colors"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold whitespace-nowrap transition-colors"
             >
-              <Calendar className="w-4 h-4" aria-hidden="true" />
-              <span>Match Schedule</span>
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              <span>Back to Schedule</span>
             </button>
           </div>
         </div>
@@ -71,29 +291,17 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
     );
   }
 
-  const embedUrl = getSafeEmbedUrl(channel.streamUrl);
-  const isPlayable = Boolean(embedUrl);
-
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
-      {/* Top In-App Navigation Row */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => navigate('/channels')}
-          className="inline-flex items-center gap-2 min-h-[44px] text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          <span>Back to Channels</span>
-        </button>
-
+      {/* Top In-App Navigation Row — Back to Schedule only */}
+      <div className="flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => navigate('/')}
-          className="inline-flex items-center gap-1.5 min-h-[44px] text-sm font-semibold text-emerald-700 hover:text-emerald-800 transition-colors"
+          className="inline-flex items-center gap-2 min-h-[44px] text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
         >
-          <Calendar className="w-4 h-4" aria-hidden="true" />
-          <span>Match Schedule</span>
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          <span>Back to Schedule</span>
         </button>
       </div>
 
@@ -126,17 +334,63 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
 
         {/* Responsive 16:9 In-App Player Area */}
         <div className="p-4 sm:p-6 bg-[#F8FAFC]">
-          <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-slate-200 bg-white">
+          <div
+            ref={playerContainerRef}
+            className="relative w-full aspect-video rounded-xl overflow-hidden border border-slate-200 bg-slate-950"
+          >
             {isPlayable && embedUrl ? (
-              <iframe
-                key={embedUrl}
-                src={embedUrl}
-                title={`${channel.name} Live Stream`}
-                className="w-full h-full border-0"
-                allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-                allowFullScreen
-                referrerPolicy="no-referrer"
-              />
+              <>
+                {/* Unsandboxed stream iframe (NO sandbox attribute, NO allow-popups) */}
+                <iframe
+                  ref={iframeRef}
+                  key={`${embedUrl}-${reloadKey}`}
+                  src={embedUrl}
+                  title={`${channel.name} Live Stream`}
+                  className="w-full h-full border-0"
+                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  referrerPolicy="no-referrer"
+                  onLoad={() => {
+                    if (streamStarted && isPlaying) {
+                      triggerStreamPlayCommands();
+                      if (!isMuted) {
+                        dispatchIframeCommand(iframeRef.current, 'unmute');
+                      }
+                    }
+                  }}
+                />
+
+                {/* Transparent Click-Shield Overlay with Centered Play Button */}
+                {shieldActive && (
+                  <div
+                    role="region"
+                    aria-label={`Click shield for ${channel.name}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/35 backdrop-blur-[1px] select-none"
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleStartStream();
+                      }}
+                      aria-label={`Play ${channel.name} live stream`}
+                      className="group inline-flex flex-col items-center gap-3 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400"
+                    >
+                      <span className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-emerald-600 group-hover:bg-emerald-500 group-active:scale-95 text-white shadow-xl ring-4 ring-white/25 flex items-center justify-center transition-all duration-150">
+                        <Play className="w-9 h-9 sm:w-10 sm:h-10 fill-current translate-x-0.5" aria-hidden="true" />
+                      </span>
+                      <span className="px-4 py-1.5 rounded-lg bg-slate-950/80 text-white text-xs sm:text-sm font-bold tracking-wide shadow-sm">
+                        Click to Play Stream
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-center p-6 sm:p-10 bg-slate-50">
                 <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
@@ -148,19 +402,82 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
                 <p className="text-sm text-slate-600 mt-2 max-w-md leading-relaxed">
                   No playable embedded stream is currently available for{' '}
                   <span className="font-semibold text-slate-900">{channel.name}</span>. Please
-                  select another live channel below or check back later.
+                  check back later.
                 </p>
                 <button
                   type="button"
-                  onClick={() => navigate('/channels')}
+                  onClick={() => navigate('/')}
                   className="mt-5 inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold transition-colors"
                 >
-                  <Tv className="w-4 h-4" aria-hidden="true" />
-                  <span>View All Channels</span>
+                  <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+                  <span>Back to Schedule</span>
                 </button>
               </div>
             )}
           </div>
+
+          {/* Three Player Control Buttons Below Video: Play, Unmute, Fullscreen */}
+          {isPlayable && embedUrl && (
+            <div className="mt-4 grid grid-cols-3 gap-2.5 sm:gap-3">
+              <button
+                type="button"
+                onClick={handleTogglePlay}
+                className="inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+              >
+                {isPlaying && !shieldActive ? (
+                  <>
+                    <Pause className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                    <span>Play</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleToggleMute}
+                className={`inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl border text-sm font-bold transition-all duration-150 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${
+                  isMuted
+                    ? 'bg-white hover:bg-slate-100 border-slate-300 text-slate-900'
+                    : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-400 text-emerald-900'
+                }`}
+              >
+                {isMuted ? (
+                  <>
+                    <Volume2 className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                    <span>Unmute</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX className="w-4 h-4 shrink-0 text-slate-600" aria-hidden="true" />
+                    <span>Mute</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleToggleFullscreen}
+                className="inline-flex items-center justify-center gap-2 min-h-[46px] px-3 sm:px-5 py-2.5 rounded-xl bg-white hover:bg-slate-100 active:scale-[0.98] border border-slate-300 text-slate-900 text-sm font-bold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+              >
+                {isFullscreen ? (
+                  <>
+                    <Minimize className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                    <span>Exit Fullscreen</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                    <span>Fullscreen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -168,61 +485,6 @@ export function WatchPlayerPage({ channelId, channels, loading = false }: WatchP
       {hasPageContent(channel.pageContent) && (
         <section className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
           <PageContent html={channel.pageContent} />
-        </section>
-      )}
-
-      {/* In-App Channel Switcher */}
-      {channels.length > 1 && (
-        <section className="mt-8">
-          <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200">
-            <h2 className="font-display text-2xl font-bold text-slate-900">
-              Switch Channel
-            </h2>
-            <span className="text-xs font-semibold text-slate-500 font-mono-tabular">
-              {channels.length} channels
-            </span>
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {channels.map((item) => {
-              const isCurrent = item.id === channel.id;
-              const itemPlayable = Boolean(getSafeEmbedUrl(item.streamUrl));
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => navigate(`/watch/${encodeURIComponent(item.id)}`)}
-                  aria-current={isCurrent ? 'page' : undefined}
-                  className={`text-left rounded-xl p-4 border transition-all flex items-center justify-between gap-3 min-h-[68px] ${
-                    isCurrent
-                      ? 'bg-emerald-50 border-emerald-500 shadow-xs'
-                      : 'bg-white border-slate-200 hover:border-emerald-400 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">{item.name}</p>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      <span className="font-semibold text-slate-800">{item.language}</span>
-                      <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
-                      <span className={itemPlayable ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-medium'}>
-                        {itemPlayable ? 'Ready' : 'Unavailable'}
-                      </span>
-                    </p>
-                  </div>
-                  <span
-                    className={`inline-flex items-center gap-1 text-xs font-bold shrink-0 px-3 py-1.5 rounded-lg ${
-                      isCurrent
-                        ? 'bg-emerald-700 text-white'
-                        : 'bg-slate-100 text-slate-800'
-                    }`}
-                  >
-                    <Play className="w-3 h-3 fill-current" aria-hidden="true" />
-                    <span>{isCurrent ? 'Watching' : 'Watch'}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
         </section>
       )}
     </div>

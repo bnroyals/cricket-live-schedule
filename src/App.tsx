@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PublicLayout } from './components/PublicLayout';
 import { HomePage } from './pages/HomePage';
 import { MatchPage } from './pages/MatchPage';
-import { ChannelsPage } from './pages/ChannelsPage';
 import { WatchPlayerPage } from './pages/WatchPlayerPage';
 import { AdminPage } from './pages/AdminPage';
-import { usePathname } from './lib/router';
+import { navigate, usePathname } from './lib/router';
 import { SECRET_ADMIN_PATH } from './lib/firebase';
 import {
   purgeExpiredMatches,
@@ -48,6 +47,17 @@ export default function App() {
     void purgeExpiredMatches(Date.now());
   }, []);
 
+  // Normalize path (strip trailing slash except root)
+  const normalizedPath =
+    pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+
+  // Redirect removed /channels route directly to Home/Schedule (/)
+  useEffect(() => {
+    if (normalizedPath === '/channels' || normalizedPath.startsWith('/channels/')) {
+      navigate('/', true);
+    }
+  }, [normalizedPath]);
+
   // Check expiry on mount, route navigation, and every 15 seconds.
   useEffect(() => {
     refreshAll();
@@ -72,10 +82,6 @@ export default function App() {
     [rawMatches, nowMs]
   );
 
-  // Normalize path (strip trailing slash except root)
-  const normalizedPath =
-    pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
-
   // Admin Panel — lives ONLY at the secret URL (28 random characters).
   // It is never linked from any public page, and /admin shows the Home page.
   if (normalizedPath === SECRET_ADMIN_PATH) {
@@ -92,7 +98,7 @@ export default function App() {
   if (normalizedPath.startsWith('/watch/')) {
     const channelId = decodeURIComponent(normalizedPath.slice('/watch/'.length));
     return (
-      <PublicLayout pathname="/channels">
+      <PublicLayout pathname={normalizedPath}>
         <WatchPlayerPage
           channelId={channelId}
           channels={channels}
@@ -121,24 +127,10 @@ export default function App() {
     );
   }
 
-  // Permanent Channels Page (/channels)
-  if (normalizedPath === '/channels') {
-    return (
-      <PublicLayout pathname={normalizedPath}>
-        <ChannelsPage
-          channels={channels}
-          matches={activeMatches}
-          nowMs={nowMs}
-          loading={channelsLoading}
-        />
-      </PublicLayout>
-    );
-  }
-
-  // Home Page (/) and fallback
+  // Home Page (/) and fallback (including redirected /channels)
   return (
     <PublicLayout pathname="/">
-      <HomePage matches={activeMatches} channels={channels} nowMs={nowMs} />
+      <HomePage matches={activeMatches} nowMs={nowMs} />
     </PublicLayout>
   );
 }

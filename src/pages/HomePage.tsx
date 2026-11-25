@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Calendar, ChevronRight, Clock, MapPin, Play } from 'lucide-react';
-import type { Channel, CricketMatch, MatchStatus } from '../types/cricket';
+import type { CricketMatch, MatchStatus } from '../types/cricket';
 import {
   formatDisplayDate,
   formatIstTime,
@@ -14,7 +14,6 @@ import { AdSlot } from '../components/AdSlot';
 
 interface HomePageProps {
   matches: CricketMatch[];
-  channels: Channel[];
   nowMs: number;
 }
 
@@ -31,7 +30,7 @@ function getStatusLabel(status: MatchStatus): string {
   }
 }
 
-export function HomePage({ matches, channels, nowMs }: HomePageProps) {
+export function HomePage({ matches, nowMs }: HomePageProps) {
   const navigate = useNavigate();
   const todayIst = getIstDateString(new Date(nowMs));
   const tomorrowIst = getIstTomorrowDateString(new Date(nowMs));
@@ -39,12 +38,6 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
   const [filterMode, setFilterMode] = useState<DateFilterMode>('today');
   const [selectedDate, setSelectedDate] = useState<string>(todayIst);
   const [heroImgError, setHeroImgError] = useState(false);
-
-  const channelMap = useMemo(() => {
-    const map = new Map<string, Channel>();
-    for (const ch of channels) map.set(ch.id, ch);
-    return map;
-  }, [channels]);
 
   const activeDate =
     filterMode === 'today'
@@ -92,7 +85,7 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
               Cricket Live Schedule &amp; Watch
             </h1>
             <p className="text-sm sm:text-base text-slate-600 mt-3 leading-relaxed max-w-xl">
-              Follow daily international &amp; domestic cricket fixtures in IST with instant match countdowns and live broadcast links.
+              Follow daily international &amp; domestic cricket fixtures in IST with instant match countdowns and live match coverage.
             </p>
           </div>
 
@@ -240,9 +233,6 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
           {filteredMatches.map((match) => {
             const effectiveStatus = getEffectiveMatchStatus(match, nowMs);
-            const assignedChannels = match.channelIds
-              .map((id) => channelMap.get(id))
-              .filter((c): c is Channel => Boolean(c));
 
             return (
               <article
@@ -298,19 +288,14 @@ export function HomePage({ matches, channels, nowMs }: HomePageProps) {
                   </div>
                 </div>
 
-                {/* Footer Row: Broadcast info + Primary Watch CTA */}
+                {/* Footer Row: Match status cue + Primary Watch CTA */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-100">
-                  <div className="text-xs text-slate-600 truncate max-w-[240px] sm:max-w-[280px]">
-                    {assignedChannels.length > 0 ? (
-                      <span>
-                        TV:{' '}
-                        <span className="text-slate-800 font-medium">
-                          {assignedChannels.map((c) => c.name).join(' · ')}
-                        </span>
-                      </span>
-                    ) : (
-                      <span>Channels available</span>
-                    )}
+                  <div className="text-xs text-slate-600 font-medium">
+                    {effectiveStatus === 'LIVE'
+                      ? 'Match is live now'
+                      : effectiveStatus === 'Finished'
+                        ? 'Match finished'
+                        : 'Live match page & countdown'}
                   </div>
 
                   <button

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Tv } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { useNavigate } from '../lib/router';
 
 interface PublicLayoutProps {
@@ -8,14 +8,13 @@ interface PublicLayoutProps {
 }
 
 /**
- * Light-mode-only, English-only public layout shell for Home (/), Match Page (/match/<slug>), and Channels (/channels).
- * Contains ZERO links to /admin, ZERO dark/light toggle, and ZERO storage notice.
+ * Light-mode-only, English-only public layout shell for Home (/), Match Page (/match/<slug>), and Watch Player (/watch/<channelId>).
+ * Contains ZERO links to /admin, ZERO /channels directory links, ZERO dark/light toggle, and ZERO storage notice.
  */
 export function PublicLayout({ pathname, children }: PublicLayoutProps) {
   const navigate = useNavigate();
 
   const isScheduleActive = pathname === '/' || pathname.startsWith('/match/');
-  const isChannelsActive = pathname === '/channels';
 
   const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
     e.preventDefault();
@@ -24,10 +23,10 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
 
   return (
     <div className="min-h-dvh flex flex-col bg-[#F5F7F9] text-slate-900 pb-16 sm:pb-0">
-      {/* Sticky Light Top Bar — Strict 3-zone contract, 56px height */}
+      {/* Sticky Light Top Bar — 56px height */}
       <header className="sticky top-0 z-40 h-14 bg-white/95 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-8">
-          {/* Zone 1: Single-line brand wordmark */}
+          {/* Single-line brand wordmark */}
           <a
             href="/"
             onClick={(e) => handleLinkClick(e, '/')}
@@ -36,10 +35,10 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
             Cricket Live
           </a>
 
-          {/* Zone 2: Clean single-line typography nav links */}
+          {/* Clean single-line typography nav */}
           <nav
             aria-label="Primary navigation"
-            className="hidden sm:flex items-center gap-7 text-sm font-semibold"
+            className="flex items-center gap-7 text-sm font-semibold"
           >
             <a
               href="/"
@@ -52,36 +51,14 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
             >
               Schedule
             </a>
-            <a
-              href="/channels"
-              onClick={(e) => handleLinkClick(e, '/channels')}
-              className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors duration-150 ${
-                isChannelsActive
-                  ? 'text-emerald-800 border-emerald-600'
-                  : 'text-slate-600 border-transparent hover:text-slate-900'
-              }`}
-            >
-              Channels
-            </a>
           </nav>
-
-          {/* Zone 3: Single primary action */}
-          <div className="flex items-center shrink-0">
-            <a
-              href="/channels"
-              onClick={(e) => handleLinkClick(e, '/channels')}
-              className="inline-flex items-center justify-center min-h-[40px] px-4 py-2 rounded-xl text-sm font-bold bg-emerald-700 text-white hover:bg-emerald-800 active:scale-[0.98] transition-all duration-150 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-            >
-              Channels
-            </a>
-          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1">{children}</main>
 
-      {/* Quiet Light Footer — English only, zero storage notice, zero admin links */}
+      {/* Quiet Light Footer — English only, zero storage notice, zero admin or directory links */}
       <footer className="border-t border-slate-200 bg-white mt-16 py-8">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-600">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -89,34 +66,24 @@ export function PublicLayout({ pathname, children }: PublicLayoutProps) {
             <span aria-hidden="true">·</span>
             <span>All match timings shown in IST (UTC+5:30)</span>
           </div>
-          <div className="text-slate-500">Worldwide Cricket Fixtures &amp; Broadcast Directory</div>
+          <div className="text-slate-500">Worldwide Cricket Fixtures &amp; Live Schedule</div>
         </div>
       </footer>
 
-      {/* Mobile Bottom Tab Bar — Compact 56px light bar, zero admin link */}
+      {/* Mobile Bottom Navigation Bar — Schedule only */}
       <nav
         aria-label="Mobile navigation"
-        className="sm:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-2"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 flex items-center justify-center"
       >
         <a
           href="/"
           onClick={(e) => handleLinkClick(e, '/')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors ${
+          className={`flex flex-col items-center justify-center gap-0.5 px-6 h-full text-[11px] font-semibold transition-colors ${
             isScheduleActive ? 'text-emerald-700' : 'text-slate-500'
           }`}
         >
           <Calendar className="w-5 h-5" aria-hidden="true" />
           <span className="whitespace-nowrap">Schedule</span>
-        </a>
-        <a
-          href="/channels"
-          onClick={(e) => handleLinkClick(e, '/channels')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors ${
-            isChannelsActive ? 'text-emerald-700' : 'text-slate-500'
-          }`}
-        >
-          <Tv className="w-5 h-5" aria-hidden="true" />
-          <span className="whitespace-nowrap">Channels</span>
         </a>
       </nav>
     </div>
