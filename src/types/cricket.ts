@@ -99,7 +99,8 @@ export type AuditAction =
   | 'MATCH_DELETED'
   | 'CHANNEL_CREATED'
   | 'CHANNEL_UPDATED'
-  | 'CHANNEL_DELETED';
+  | 'CHANNEL_DELETED'
+  | 'AD_SLOT_UPDATED';
 
 export interface AuditLogEntry {
   id: string;
@@ -109,3 +110,30 @@ export interface AuditLogEntry {
   adminEmail: string;
   details?: string;
 }
+
+export type AdSlotPosition =
+  | 'home-top'
+  | 'home-mid'
+  | 'after-each-date-group'
+  | 'home-bottom'
+  | 'sticky-bottom-banner'
+  | 'match-top'
+  | 'watch-player-top'
+  | 'watch-player-bottom'
+  | 'after-match-preview'
+  | 'after-playing-xi'
+  | 'match-bottom'
+  | 'watch-above-player'
+  | 'watch-below-player';
+
+export type SiteWideAdSlotId = 'social-bar' | 'popunder';
+
+export type AdSlotId = AdSlotPosition | SiteWideAdSlotId;
+
+export interface AdSlotConfig {
+  enabled: boolean;
+  code: string;
+  updatedAt?: string;
+}
+
+export type AdSettingsMap = Record<AdSlotId, AdSlotConfig>;

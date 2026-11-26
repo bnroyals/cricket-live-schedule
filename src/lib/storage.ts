@@ -19,6 +19,8 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from './firebase';
 import type {
+  AdSettingsMap,
+  AdSlotId,
   AdminSession,
   AuditAction,
   AuditLogEntry,
@@ -42,6 +44,7 @@ import {
 import { isMatchExpired } from './time';
 import { isValidCountryCode, isWestIndiesTeam, normalizeCountryCode } from './countries';
 import { resolveBackfillCountryCode } from './teamFlags';
+import { createDefaultAdSettings, normalizeAdSettings } from './adSlots';
 
 /**
  * Live Firebase Firestore storage + hardened single-admin Firebase Auth.
@@ -1360,4 +1363,93 @@ export async function adminDeleteChannel(
   }
   appendAuditLog('CHANNEL_DELETED', target.name, AUTHORIZED_ADMIN_EMAIL, `ID: ${target.id}`);
   return { ok: true };
+}
+
+let liveAdSettings: AdSettingsMap = createDefaultAdSettings();
+
+/**
+ * Subscribe LIVE to the Firestore settings/ads document so Admin Panel ad
+ * toggle & code changes go live on the public site with zero rebuild.
+ */
+export function subscribeToLiveAdSettings(
+  onUpdate: (settings: AdSettingsMap) => void,
+  onReady?: () => void
+): () => void {
+  const db = getFirestoreDb();
+  let notifiedReady = false;
+  return onSnapshot(
+    doc(db, 'settings', 'ads'),
+    (snap) => {
+      const next = snap.exists() ? normalizeAdSettings(snap.data()) : createDefaultAdSettings();
+      liveAdSettings = next;
+      onUpdate(next);
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    },
+    () => {
+      const fallback = createDefaultAdSettings();
+      liveAdSettings = fallback;
+      onUpdate(fallback);
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onReady?.();
+      }
+    }
+  );
+}
+
+export async function adminSaveAdSlot(
+  session: AdminSession | null,
+  slotId: AdSlotId,
+  input: { enabled: boolean; code: string }
+): Promise<{ ok: boolean; settings?: AdSettingsMap; error?: string }> {
+  try {
+    assertAuthorizedAdminSession(session);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Admin session expired. Sign in again.',
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextSlot = {
+    enabled: Boolean(input.enabled),
+    code: typeof input.code === 'string' ? input.code : '',
+    updatedAt: nowIso,
+  };
+
+  try {
+    await setDoc(
+      doc(getFirestoreDb(), 'settings', 'ads'),
+      {
+        slots: {
+          [slotId]: nextSlot,
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+  } catch {
+    return {
+      ok: false,
+      error: 'Failed to save ad slot to Firestore. Check your connection and try again.',
+    };
+  }
+
+  const updatedSettings: AdSettingsMap = {
+    ...liveAdSettings,
+    [slotId]: nextSlot,
+  };
+  liveAdSettings = updatedSettings;
+
+  appendAuditLog(
+    'AD_SLOT_UPDATED',
+    slotId,
+    AUTHORIZED_ADMIN_EMAIL,
+    `${nextSlot.enabled ? 'Enabled' : 'Disabled'} · ${nextSlot.code.trim().length} chars`
+  );
+  return { ok: true, settings: updatedSettings };
 }

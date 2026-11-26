@@ -8,11 +8,14 @@ import { navigate, usePathname } from './lib/router';
 import { SECRET_ADMIN_PATH } from './lib/firebase';
 import {
   purgeExpiredMatches,
+  subscribeToLiveAdSettings,
   subscribeToLiveChannels,
   subscribeToLiveMatches,
 } from './lib/storage';
 import { isChannelEntryOpen, isMatchExpired } from './lib/time';
-import type { Channel, CricketMatch } from './types/cricket';
+import { createDefaultAdSettings } from './lib/adSlots';
+import { AdSettingsProvider } from './lib/adContext';
+import type { AdSettingsMap, Channel, CricketMatch } from './types/cricket';
 
 export default function App() {
   const pathname = usePathname();
@@ -20,6 +23,7 @@ export default function App() {
   // Live Firestore collections (zero hardcoded or localStorage fallback content).
   const [rawMatches, setRawMatches] = useState<CricketMatch[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [adSettings, setAdSettings] = useState<AdSettingsMap>(() => createDefaultAdSettings());
   const [matchesLoading, setMatchesLoading] = useState<boolean>(true);
   const [channelsLoading, setChannelsLoading] = useState<boolean>(true);
 
@@ -30,7 +34,7 @@ export default function App() {
   // 1-second clock tick for smooth live match countdowns and expiry checks.
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  // Subscribe LIVE to Firestore matches & channels so Admin Panel edits appear immediately.
+  // Subscribe LIVE to Firestore matches, channels & ad placements so Admin Panel edits appear immediately.
   useEffect(() => {
     const unsubMatches = subscribeToLiveMatches(
       (nextMatches) => setRawMatches(nextMatches),
@@ -40,9 +44,11 @@ export default function App() {
       (nextChannels) => setChannels(nextChannels),
       () => setChannelsLoading(false)
     );
+    const unsubAds = subscribeToLiveAdSettings((nextAds) => setAdSettings(nextAds));
     return () => {
       unsubMatches();
       unsubChannels();
+      unsubAds();
     };
   }, []);
 
@@ -122,6 +128,7 @@ export default function App() {
       <AdminPage
         matches={activeMatches}
         channels={channels}
+        adSettings={adSettings}
         onRefreshData={refreshAll}
       />
     );
@@ -131,14 +138,16 @@ export default function App() {
   // Never exposed at a public URL; browser address never changes to /watch/<channelId>.
   if (activeChannelId !== null) {
     return (
-      <PublicLayout pathname="" onNavigate={handleCloseChannel}>
-        <WatchPlayerPage
-          channelId={activeChannelId}
-          channels={channels}
-          loading={channelsLoading}
-          onBackToSchedule={handleBackToSchedule}
-        />
-      </PublicLayout>
+      <AdSettingsProvider settings={adSettings}>
+        <PublicLayout pathname="" onNavigate={handleCloseChannel}>
+          <WatchPlayerPage
+            channelId={activeChannelId}
+            channels={channels}
+            loading={channelsLoading}
+            onBackToSchedule={handleBackToSchedule}
+          />
+        </PublicLayout>
+      </AdSettingsProvider>
     );
   }
 
@@ -149,23 +158,27 @@ export default function App() {
     const match =
       activeMatches.find((m) => m.slug.toLowerCase() === normalizedSlug) ?? null;
     return (
-      <PublicLayout pathname={normalizedPath}>
-        <MatchPage
-          slug={slug}
-          match={match}
-          channels={channels}
-          nowMs={nowMs}
-          loading={matchesLoading}
-          onOpenChannel={(channelId) => handleOpenChannel(channelId, match)}
-        />
-      </PublicLayout>
+      <AdSettingsProvider settings={adSettings}>
+        <PublicLayout pathname={normalizedPath}>
+          <MatchPage
+            slug={slug}
+            match={match}
+            channels={channels}
+            nowMs={nowMs}
+            loading={matchesLoading}
+            onOpenChannel={(channelId) => handleOpenChannel(channelId, match)}
+          />
+        </PublicLayout>
+      </AdSettingsProvider>
     );
   }
 
   // Home Page (/) and fallback (including redirected /channels and /watch)
   return (
-    <PublicLayout pathname="/">
-      <HomePage matches={activeMatches} nowMs={nowMs} />
-    </PublicLayout>
+    <AdSettingsProvider settings={adSettings}>
+      <PublicLayout pathname="/">
+        <HomePage matches={activeMatches} nowMs={nowMs} />
+      </PublicLayout>
+    </AdSettingsProvider>
   );
 }

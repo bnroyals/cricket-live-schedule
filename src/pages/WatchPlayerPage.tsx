@@ -97,10 +97,14 @@ export function WatchPlayerPage({
       </div>
 
       <AdSlot positionId="watch-player-top" />
+      <AdSlot positionId="watch-above-player" />
 
       <section className="mt-3 rounded-2xl bg-white border border-slate-200 shadow-xs p-5 sm:p-6">
         <PageContent html={channelHtml} />
       </section>
+
+      <AdSlot positionId="watch-below-player" />
+      <AdSlot positionId="watch-player-bottom" />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Calendar } from 'lucide-react';
 import { useNavigate } from '../lib/router';
+import { SiteWideAds } from './SiteWideAds';
 
 interface PublicLayoutProps {
   pathname: string;
@@ -88,6 +89,9 @@ export function PublicLayout({ pathname, children, onNavigate }: PublicLayoutPro
           <span className="whitespace-nowrap">Schedule</span>
         </a>
       </nav>
+
+      {/* Site-wide script slots (Social Bar, optional Popunder — only run when ON with code) */}
+      <SiteWideAds />
     </div>
   );
 }

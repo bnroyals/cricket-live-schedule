@@ -53,6 +53,20 @@ export function HomePage({ matches, nowMs }: HomePageProps) {
     return matches.filter((m) => m.date === activeDate);
   }, [matches, activeDate]);
 
+  // Group filtered matches by date in chronological order for after-each-date-group ad slots.
+  const dateGroups = useMemo(() => {
+    const groups: Array<{ date: string; matches: CricketMatch[] }> = [];
+    for (const match of filteredMatches) {
+      const last = groups[groups.length - 1];
+      if (last && last.date === match.date) {
+        last.matches.push(match);
+      } else {
+        groups.push({ date: match.date, matches: [match] });
+      }
+    }
+    return groups;
+  }, [filteredMatches]);
+
   const liveCount = useMemo(
     () => matches.filter((m) => getEffectiveMatchStatus(m, nowMs) === 'LIVE').length,
     [matches, nowMs]
@@ -230,89 +244,100 @@ export function HomePage({ matches, nowMs }: HomePageProps) {
           )}
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {filteredMatches.map((match) => {
-            const effectiveStatus = getEffectiveMatchStatus(match, nowMs);
+        <div className="mt-6 space-y-6">
+          {dateGroups.map((group) => (
+            <div key={group.date}>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {group.matches.map((match) => {
+                  const effectiveStatus = getEffectiveMatchStatus(match, nowMs);
 
-            return (
-              <article
-                key={match.id}
-                className="rounded-2xl bg-white border border-slate-200 hover:border-emerald-300 shadow-xs transition-colors p-5 sm:p-6 flex flex-col justify-between gap-5"
-              >
-                <div>
-                  {/* Quiet 1-line unboxed metadata kicker + status */}
-                  <div className="flex items-start justify-between gap-3 text-xs">
-                    <div className="text-slate-600 leading-relaxed">
-                      <span className="text-slate-900 font-semibold">{match.tournament}</span>
-                      {match.matchNumber && (
-                        <>
-                          <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
-                          <span>{match.matchNumber}</span>
-                        </>
-                      )}
-                    </div>
-                    <span
-                      className={`shrink-0 whitespace-nowrap font-bold tracking-wide ${
-                        effectiveStatus === 'LIVE'
-                          ? 'text-red-600'
-                          : effectiveStatus === 'Finished'
-                            ? 'text-slate-500'
-                            : 'text-emerald-700'
-                      }`}
+                  return (
+                    <article
+                      key={match.id}
+                      className="rounded-2xl bg-white border border-slate-200 hover:border-emerald-300 shadow-xs transition-colors p-5 sm:p-6 flex flex-col justify-between gap-5"
                     >
-                      {getStatusLabel(effectiveStatus)}
-                    </span>
-                  </div>
+                      <div>
+                        {/* Quiet 1-line unboxed metadata kicker + status */}
+                        <div className="flex items-start justify-between gap-3 text-xs">
+                          <div className="text-slate-600 leading-relaxed">
+                            <span className="text-slate-900 font-semibold">{match.tournament}</span>
+                            {match.matchNumber && (
+                              <>
+                                <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
+                                <span>{match.matchNumber}</span>
+                              </>
+                            )}
+                          </div>
+                          <span
+                            className={`shrink-0 whitespace-nowrap font-bold tracking-wide ${
+                              effectiveStatus === 'LIVE'
+                                ? 'text-red-600'
+                                : effectiveStatus === 'Finished'
+                                  ? 'text-slate-500'
+                                  : 'text-emerald-700'
+                            }`}
+                          >
+                            {getStatusLabel(effectiveStatus)}
+                          </span>
+                        </div>
 
-                  {/* Teams Headline */}
-                  <h3 className="font-display text-3xl sm:text-[34px] font-extrabold text-slate-900 tracking-tight mt-3 leading-tight flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <TeamNameWithFlag teamName={match.teamA} countryCode={match.countryCodeA} />
-                    <span className="text-amber-600 font-bold text-2xl">vs</span>
-                    <TeamNameWithFlag teamName={match.teamB} countryCode={match.countryCodeB} />
-                  </h3>
+                        {/* Teams Headline */}
+                        <h3 className="font-display text-3xl sm:text-[34px] font-extrabold text-slate-900 tracking-tight mt-3 leading-tight flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                          <TeamNameWithFlag teamName={match.teamA} countryCode={match.countryCodeA} />
+                          <span className="text-amber-600 font-bold text-2xl">vs</span>
+                          <TeamNameWithFlag teamName={match.teamB} countryCode={match.countryCodeB} />
+                        </h3>
 
-                  {/* Time, Date & Venue */}
-                  <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm text-slate-700">
-                    <div className="flex items-center gap-2 font-mono-tabular font-semibold text-slate-900">
-                      <Clock className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
-                      <span>{formatIstTime(match.startTime)}</span>
-                      <span className="text-slate-300" aria-hidden="true">·</span>
-                      <span className="text-slate-600 font-sans font-medium">
-                        {formatDisplayDate(match.date)}
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2 text-slate-600 text-xs sm:text-sm">
-                      <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
-                      <span>{match.venue}</span>
-                    </div>
-                  </div>
-                </div>
+                        {/* Time, Date & Venue */}
+                        <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm text-slate-700">
+                          <div className="flex items-center gap-2 font-mono-tabular font-semibold text-slate-900">
+                            <Clock className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+                            <span>{formatIstTime(match.startTime)}</span>
+                            <span className="text-slate-300" aria-hidden="true">·</span>
+                            <span className="text-slate-600 font-sans font-medium">
+                              {formatDisplayDate(match.date)}
+                            </span>
+                          </div>
+                          <div className="flex items-start gap-2 text-slate-600 text-xs sm:text-sm">
+                            <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
+                            <span>{match.venue}</span>
+                          </div>
+                        </div>
+                      </div>
 
-                {/* Footer Row: Match status cue + Primary Watch CTA */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-100">
-                  <div className="text-xs text-slate-600 font-medium">
-                    {effectiveStatus === 'LIVE'
-                      ? 'Match is live now'
-                      : effectiveStatus === 'Finished'
-                        ? 'Match finished'
-                        : 'Live match page & countdown'}
-                  </div>
+                      {/* Footer Row: Match status cue + Primary Watch CTA */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-100">
+                        <div className="text-xs text-slate-600 font-medium">
+                          {effectiveStatus === 'LIVE'
+                            ? 'Match is live now'
+                            : effectiveStatus === 'Finished'
+                              ? 'Match finished'
+                              : 'Live match page & countdown'}
+                        </div>
 
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/match/${match.slug}`)}
-                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold whitespace-nowrap shrink-0 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-                  >
-                    <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                    <span>Watch</span>
-                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
-                  </button>
-                </div>
-              </article>
-            );
-          })}
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/match/${match.slug}`)}
+                          className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white text-sm font-bold whitespace-nowrap shrink-0 transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                        >
+                          <Play className="w-4 h-4 fill-current" aria-hidden="true" />
+                          <span>Watch</span>
+                          <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <AdSlot positionId="after-each-date-group" />
+            </div>
+          ))}
         </div>
       )}
+
+      <AdSlot positionId="home-bottom" />
+      <AdSlot positionId="sticky-bottom-banner" />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Calendar, Clock, Lock, MapPin, Play } from 'lucide-react';
 import type { Channel, CricketMatch } from '../types/cricket';
 import { PageContent } from '../components/PageContent';
+import { AdSlot } from '../components/AdSlot';
 import { hasPageContent } from '../lib/pageContent';
 import { channelHasPlayableEmbed, getChannelDisplayName } from '../lib/channelHtml';
 import {
@@ -191,6 +192,8 @@ export function MatchPage({
         <span>All Matches</span>
       </button>
 
+      <AdSlot positionId="match-top" />
+
       {/* Main Match Card */}
       <section className="mt-3 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8">
         {/* Top Metadata Line (Zero pills) */}
@@ -324,6 +327,8 @@ export function MatchPage({
           </div>
         </dl>
 
+        <AdSlot positionId="watch-player-top" />
+
         {/* Live Match-Start Countdown Timer above the Watch button(s) */}
         {primaryChannel && !countdown.isStarted && (
           <div
@@ -420,6 +425,8 @@ export function MatchPage({
             </button>
           </div>
         )}
+
+        <AdSlot positionId="watch-player-bottom" />
       </section>
 
       {/* 1. Match Preview — Unique factual prose + Admin-written Page Content (zero links) */}
@@ -455,6 +462,8 @@ export function MatchPage({
           </div>
         )}
       </section>
+
+      <AdSlot positionId="after-match-preview" />
 
       {/* 2. Match Details — Structured facts table from match data */}
       <section
@@ -529,6 +538,8 @@ export function MatchPage({
         )}
       </section>
 
+      <AdSlot positionId="after-playing-xi" />
+
       {/* 4. Result — Shown only when result data exists or match has finished */}
       {showResultSection && (
         <section
@@ -602,6 +613,8 @@ export function MatchPage({
           </dl>
         </section>
       )}
+
+      <AdSlot positionId="match-bottom" />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   KeyRound,
   Lock,
   LogOut,
+  Megaphone,
   Plus,
   Shield,
   Trash2,
@@ -18,6 +19,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import type {
+  AdSettingsMap,
   AdminSession,
   AuditLogEntry,
   Channel,
@@ -65,14 +67,17 @@ import {
   getChannelHtml,
   parseChannelNameFromHtml,
 } from '../lib/channelHtml';
+import { AdminAdsPanel } from '../components/AdminAdsPanel';
+import { ALL_AD_SLOT_IDS, isAdSlotActive } from '../lib/adSlots';
 
 interface AdminPageProps {
   matches: CricketMatch[];
   channels: Channel[];
+  adSettings: AdSettingsMap;
   onRefreshData: () => void;
 }
 
-type AdminTab = 'matches' | 'channels' | 'audit' | 'security';
+type AdminTab = 'matches' | 'channels' | 'ads' | 'audit' | 'security';
 
 function parseMultilineList(raw: string): string[] {
   return raw
@@ -109,7 +114,7 @@ const EMPTY_CHANNEL_FORM = {
   html: '',
 };
 
-export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) {
+export function AdminPage({ matches, channels, adSettings, onRefreshData }: AdminPageProps) {
   const navigate = useNavigate();
 
   // Wait for Firebase Auth to restore and sync Firestore session config & lockout state on load.
@@ -856,6 +861,26 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === 'ads'}
+            onClick={() => {
+              setActiveTab('ads');
+              setFeedback(null);
+            }}
+            className={`inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap shrink-0 transition-colors ${
+              activeTab === 'ads'
+                ? 'bg-emerald-700 text-white'
+                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Megaphone className="w-4 h-4" aria-hidden="true" />
+            <span>
+              Ads ({ALL_AD_SLOT_IDS.filter((id) => isAdSlotActive(adSettings[id])).length})
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === 'audit'}
             onClick={() => {
               setActiveTab('audit');
@@ -1571,6 +1596,18 @@ export function AdminPage({ matches, channels, onRefreshData }: AdminPageProps) 
             </div>
           );
         })()}
+
+        {/* ================================================================ */}
+        {/* ADS TAB (Banner Placements + Site-Wide Code Boxes) */}
+        {/* ================================================================ */}
+        {activeTab === 'ads' && (
+          <AdminAdsPanel
+            session={session}
+            adSettings={adSettings}
+            onFeedback={(next) => setFeedback(next)}
+            onSaved={() => void loadAuditLog(getActiveAdminSession())}
+          />
+        )}
 
         {/* ================================================================ */}
         {/* AUDIT LOG TAB (Admin-only visibility, synced with Firestore) */}
