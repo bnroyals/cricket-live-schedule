@@ -1,6 +1,7 @@
 import React from 'react';
 import { Calendar } from 'lucide-react';
 import { useNavigate } from '../lib/router';
+import { AdSlot } from './AdSlot';
 import { SiteWideAds } from './SiteWideAds';
 
 interface PublicLayoutProps {
@@ -61,17 +62,22 @@ export function PublicLayout({ pathname, children, onNavigate }: PublicLayoutPro
       {/* Main Content */}
       <main className="flex-1">{children}</main>
 
+      <AdSlot positionId="footer-top" />
+
       {/* Quiet Light Footer — English only, zero storage notice, zero admin or directory links */}
       <footer className="border-t border-slate-200 bg-white mt-16 py-8">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-600">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col gap-3 text-xs text-slate-600">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-slate-900 font-semibold">Cricket Live Schedule &amp; Watch</span>
             <span aria-hidden="true">·</span>
             <span>All match timings shown in IST (UTC+5:30)</span>
           </div>
+          <AdSlot positionId="footer-mid" />
           <div className="text-slate-500">Worldwide Cricket Fixtures &amp; Live Schedule</div>
         </div>
       </footer>
+
+      <AdSlot positionId="footer-bottom" />
 
       {/* Mobile Bottom Navigation Bar — Schedule only */}
       <nav

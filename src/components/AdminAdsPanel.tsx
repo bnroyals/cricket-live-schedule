@@ -32,6 +32,11 @@ const BANNER_GROUPS: Array<{ group: AdSlotGroup; title: string; subtitle: string
     title: 'Watch / Channel Page Slots',
     subtitle: 'Banner placements above and below the stream player.',
   },
+  {
+    group: 'footer',
+    title: 'Footer Slots',
+    subtitle: 'Banner placements directly above, inside, and below the site footer.',
+  },
 ];
 
 export function AdminAdsPanel({

@@ -121,10 +121,15 @@ export type AdSlotPosition =
   | 'watch-player-top'
   | 'watch-player-bottom'
   | 'after-match-preview'
+  | 'after-match-details'
   | 'after-playing-xi'
+  | 'after-result'
   | 'match-bottom'
   | 'watch-above-player'
-  | 'watch-below-player';
+  | 'watch-below-player'
+  | 'footer-top'
+  | 'footer-mid'
+  | 'footer-bottom';
 
 export type SiteWideAdSlotId = 'social-bar' | 'popunder';
 

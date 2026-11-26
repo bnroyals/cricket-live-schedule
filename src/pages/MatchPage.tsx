@@ -489,6 +489,8 @@ export function MatchPage({
         </dl>
       </section>
 
+      <AdSlot positionId="after-match-details" />
+
       {/* 3. Playing XI — Real squads when present, clean empty state otherwise */}
       <section
         aria-labelledby="playing-xi-heading"
@@ -542,49 +544,53 @@ export function MatchPage({
 
       {/* 4. Result — Shown only when result data exists or match has finished */}
       {showResultSection && (
-        <section
-          aria-labelledby="match-result-heading"
-          className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
-        >
-          <h2
-            id="match-result-heading"
-            className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+        <>
+          <section
+            aria-labelledby="match-result-heading"
+            className="mt-6 rounded-2xl bg-white border border-slate-200 shadow-xs p-6 sm:p-8"
           >
-            Result
-          </h2>
-          {resultInfo.hasAny ? (
-            <div className="mt-4 space-y-4 text-sm text-slate-700">
-              {resultInfo.resultText && (
-                <p className="text-base font-bold text-slate-900">{resultInfo.resultText}</p>
-              )}
-              {resultInfo.resultSummary && (
-                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
-                  {resultInfo.resultSummary}
-                </p>
-              )}
-              {resultInfo.playerOfTheMatch && (
-                <p>
-                  <span className="font-semibold text-slate-900">Player of the Match: </span>
-                  <span>{resultInfo.playerOfTheMatch}</span>
-                </p>
-              )}
-              {resultInfo.topPerformers.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">Top Performers</h3>
-                  <ul className="mt-2 space-y-1.5 list-disc list-inside text-slate-700">
-                    {resultInfo.topPerformers.map((item, idx) => (
-                      <li key={`${item}-${idx}`}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-600">
-              Result not available yet. Official match outcome and top performers will appear here once published.
-            </p>
-          )}
-        </section>
+            <h2
+              id="match-result-heading"
+              className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight"
+            >
+              Result
+            </h2>
+            {resultInfo.hasAny ? (
+              <div className="mt-4 space-y-4 text-sm text-slate-700">
+                {resultInfo.resultText && (
+                  <p className="text-base font-bold text-slate-900">{resultInfo.resultText}</p>
+                )}
+                {resultInfo.resultSummary && (
+                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                    {resultInfo.resultSummary}
+                  </p>
+                )}
+                {resultInfo.playerOfTheMatch && (
+                  <p>
+                    <span className="font-semibold text-slate-900">Player of the Match: </span>
+                    <span>{resultInfo.playerOfTheMatch}</span>
+                  </p>
+                )}
+                {resultInfo.topPerformers.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Top Performers</h3>
+                    <ul className="mt-2 space-y-1.5 list-disc list-inside text-slate-700">
+                      {resultInfo.topPerformers.map((item, idx) => (
+                        <li key={`${item}-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-600">
+                Result not available yet. Official match outcome and top performers will appear here once published.
+              </p>
+            )}
+          </section>
+
+          <AdSlot positionId="after-result" />
+        </>
       )}
 
       {/* 5. FAQs — Plain-text Q&A from match data only (zero links) */}

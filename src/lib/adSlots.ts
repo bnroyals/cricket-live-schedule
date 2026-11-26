@@ -1,6 +1,6 @@
 import type { AdSettingsMap, AdSlotConfig, AdSlotId } from '../types/cricket';
 
-export type AdSlotGroup = 'home' | 'match' | 'watch' | 'sitewide';
+export type AdSlotGroup = 'home' | 'match' | 'watch' | 'footer' | 'sitewide';
 
 export interface AdSlotDefinition {
   id: AdSlotId;
@@ -68,10 +68,22 @@ export const AD_SLOT_DEFINITIONS: AdSlotDefinition[] = [
     description: 'Banner placement directly after the Match Preview section.',
   },
   {
+    id: 'after-match-details',
+    label: 'After Match Details',
+    group: 'match',
+    description: 'Banner placement directly after the Match Details section.',
+  },
+  {
     id: 'after-playing-xi',
     label: 'After Playing XI',
     group: 'match',
     description: 'Banner placement directly after the Playing XI section.',
+  },
+  {
+    id: 'after-result',
+    label: 'After Result',
+    group: 'match',
+    description: 'Banner placement directly after the Result section.',
   },
   {
     id: 'match-bottom',
@@ -92,6 +104,26 @@ export const AD_SLOT_DEFINITIONS: AdSlotDefinition[] = [
     label: 'Watch Below Player',
     group: 'watch',
     description: 'Banner placement directly below the stream player on the Watch / Channel view.',
+  },
+
+  // FOOTER banner slots
+  {
+    id: 'footer-top',
+    label: 'Footer Top',
+    group: 'footer',
+    description: 'Full-width banner placement directly above the site footer.',
+  },
+  {
+    id: 'footer-mid',
+    label: 'Footer Mid',
+    group: 'footer',
+    description: 'Banner placement between the two text blocks inside the site footer.',
+  },
+  {
+    id: 'footer-bottom',
+    label: 'Footer Bottom',
+    group: 'footer',
+    description: 'Full-width banner placement directly below the site footer.',
   },
 
   // Site-wide script slots
